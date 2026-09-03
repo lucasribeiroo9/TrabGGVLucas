@@ -58,3 +58,13 @@ aqui. Exige que o recebimento esteja fechado e o repasse **marcado como entregue
 A Fase 3 (esquema e migração) começa com a governança como está. Mudança de mapa depois é barata:
 `fluxo_etapas` e `fluxo_transicoes` são **linhas de tabela**, não código — mexer nelas não obriga a
 migrar de novo.
+
+## 7 (complemento) · Pendência de documento: **pedido sem recebimento confirmado continua pendente**
+
+> "O que foi pedido, já confirmou que foi recebido? Porque se não responderam, ainda é pendência.
+> Embora possa ser uma etapa diferente neste caso, o documento em si continua pendente."
+
+Logo a leitura conservadora da migração está certa: `PENDENCIAS` lista o que **falta**. A pendência
+de documento tem um sub-estado — **ainda não pedida** ou **pedida, aguardando** — que é atributo
+(`solicitada_em`), não etapa; a pendência só fecha com `recebida_em` ou dispensa justificada. As 551
+fichas entram como pendência aberta, e a tela mostra há quanto tempo cada uma espera resposta.
