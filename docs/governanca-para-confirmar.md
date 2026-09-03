@@ -206,3 +206,259 @@ stateDiagram-v2
 - **Parcelamento do art. 916 do CPC** na execução trabalhista é controverso (o TST tem entendimentos
   contrários). Está na lista de situações porque a base o usa (9+4 casos) **[CONFIRMAR]** se o escritório
   aceita ou impugna.
+
+---
+
+## 3. AUDIÊNCIA — cada audiência é uma linha
+
+O Airtable guardava **uma** audiência por processo e sobrescrevia a anterior; a redesignada apagava a
+história. Aqui cada audiência é uma linha, com tipo, modalidade, data, checklist de preparação e resultado.
+
+```mermaid
+stateDiagram-v2
+    [*] --> DESIGNADA
+    DESIGNADA --> EM_PREPARACAO : iniciar preparação
+    DESIGNADA --> REALIZADA : resultado registrado 🔒
+    EM_PREPARACAO --> REALIZADA : resultado registrado 🔒
+    DESIGNADA --> REDESIGNADA : nova audiência cadastrada 🔒
+    EM_PREPARACAO --> REDESIGNADA : nova audiência cadastrada 🔒
+    DESIGNADA --> ADIADA : sem data, motivo
+    EM_PREPARACAO --> ADIADA : sem data, motivo
+    DESIGNADA --> NAO_REALIZADA : motivo
+    EM_PREPARACAO --> NAO_REALIZADA : motivo
+    DESIGNADA --> CANCELADA : motivo
+    EM_PREPARACAO --> CANCELADA : motivo
+    REALIZADA --> EM_PREPARACAO : registrada por engano (GESTOR)
+    REALIZADA --> [*]
+    REDESIGNADA --> [*]
+    ADIADA --> [*]
+    NAO_REALIZADA --> [*]
+    CANCELADA --> [*]
+```
+
+| etapa | o que significa | quem toca | o que trava |
+|---|---|---|---|
+| **DESIGNADA** | O juízo marcou. Tipo (INICIAL, INSTRUÇÃO, UNA, HOMOLOGAÇÃO, CONCILIAÇÃO EM EXECUÇÃO, JULGAMENTO) e modalidade (PRESENCIAL, VÍDEO) são atributos — "UNA/VIDEO" vira UNA + VÍDEO; "UNA-RS" vira UNA + rito sumaríssimo no processo **[CONFIRMAR 17]**. | Jurídico | — |
+| **EM_PREPARACAO** | Checklist na própria linha: **cliente orientado**, **testemunhas confirmadas** (e intimação pedida se alguma falhou — art. 825 CLT: testemunha comparece sem intimação; se não vier, o juízo intima), **ad video feito** **[CONFIRMAR 14]** o que é o ad video e quem faz, **documentos e proposta de acordo prontos**. Na una a defesa vem na hora: a réplica se prepara aqui. Entra-se ao marcar o primeiro item. | Jurídico | — |
+| **REALIZADA** (final) | Aconteceu. O **resultado** é obrigatório: acordo, defesa juntada, instrução encerrada, sentença designada, convertida em diligência. É o resultado que abre os prazos (réplica, razões finais) e move o processo. | Jurídico | Resultado registrado. |
+| **REDESIGNADA** (final) | Nova data marcada. A nova audiência é **outra linha**, ligada por `redesignada_de`; só se fecha esta depois de cadastrar aquela. | Jurídico | Nova audiência cadastrada. |
+| **ADIADA** (final) | Adiada sem data. Quando o juízo designar, nasce outra linha. | Jurídico | Motivo. |
+| **NAO_REALIZADA** (final) | Não aconteceu: **ausência do reclamante** (arquivamento, art. 844 CLT, e custas se não justificar em 15 dias), ausência da reclamada (revelia, art. 844), falta de intimação, problema técnico. O motivo fica na audiência e alimenta o mapa de perda evitável por captador/entrevistador — a CÓPIA tem 126 ausências. | Jurídico | Motivo. |
+| **CANCELADA** (final) | Perdeu o objeto: acordo antes da data, desistência, extinção. | Jurídico | Motivo. |
+
+**O alerta de preparação.** `v_audiencias_sem_preparacao` lista audiência designada/em preparação a
+**7 dias corridos ou menos** sem nenhum item do checklist marcado. Proposta de N = 7 **[CONFIRMAR]**:
+confirmar testemunha e, se falhar, pedir intimação leva uma semana; menos que isso não dá tempo de reagir.
+Para audiência inicial (só conciliação e defesa) 3 dias bastariam — se quiser, N por tipo.
+
+**Onde o escritório e a CLT divergem.** A CLT do rito ordinário prevê audiência una (art. 849) e o
+fracionamento inicial/instrução é prática dos TRTs; no sumaríssimo a una é regra (art. 852-C). O desenho não
+impõe sequência de tipos — o juízo decide — só exige que cada uma seja registrada. Audiência de
+**julgamento** (publicação da sentença em audiência) conta o prazo do RO da data, mesmo que ninguém compareça
+(Súmula 197 TST): por isso o resultado "sentença publicada em audiência" cria o prazo automaticamente, como
+proposta para o Jurídico confirmar.
+
+---
+
+## 4. PRAZO — o que o Airtable não sabia que existia
+
+Não havia noção de prazo processual na base — só data de audiência, perícia e a prescrição bienal. O
+Astrea fazia isso **[CONFIRMAR 4]**: continua? Aqui o prazo nasce da **publicação no DEJT**, da intimação no
+PJe, da ata de audiência ou de despacho, e é contado pelo sistema.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ABERTO
+    ABERTO --> CUMPRIDO : protocolo registrado 🔒
+    ABERTO --> SUSPENSO : motivo
+    SUSPENSO --> ABERTO : novo vencimento 🔒
+    ABERTO --> SEM_OBJETO : motivo
+    SUSPENSO --> SEM_OBJETO : motivo
+    ABERTO --> PERDIDO : GESTOR, motivo
+    CUMPRIDO --> ABERTO : reabrir (GESTOR)
+    SEM_OBJETO --> ABERTO : reabrir (GESTOR)
+    CUMPRIDO --> [*]
+    PERDIDO --> [*]
+    SEM_OBJETO --> [*]
+```
+
+| etapa | o que significa | quem toca | o que trava |
+|---|---|---|---|
+| **ABERTO** | Correndo. O vencimento está na linha; o SLA é o próprio vencimento, por isso não há `sla_dias`. A fila mostra os mais próximos primeiro (`v_prazos_criticos`). | Jurídico (responsável do prazo), Publicação lê o diário | Cumprir exige **data de protocolo e a peça** (ou o número do protocolo do PJe). |
+| **SUSPENSO** | Suspenso por decisão do juízo, recesso ou força maior (CLT art. 775 §1º). | Jurídico | Retomar exige o **novo vencimento recontado**. |
+| **CUMPRIDO** (final) | Protocolado no prazo. | Jurídico | — |
+| **PERDIDO** (final) | Venceu sem protocolo. **Só gestor registra, com motivo.** O banco recusa PERDIDO sem motivo. É o pior número do escritório e precisa existir para ser contado, não escondido em "arquivado". | Gestão | Papel GESTOR + motivo (gatilho `gov_prazo_regras`). |
+| **SEM_OBJETO** (final) | O prazo morreu por acordo, desistência ou decisão que o tornou desnecessário. Existe para que "perdido" nunca seja sujado por prazo que simplesmente deixou de importar. | Jurídico | Motivo. |
+
+### Como se conta (e o banco garante)
+
+- **Dias úteis** (CLT art. 775, redação da Lei 13.467/2017). Prazo em dias corridos é recusado pelo gatilho
+  `gov_prazo_regras` salvo justificativa escrita — é o erro que faz descartar prazo vivo. Diferente do Prev,
+  que conta em corridos pela Lei 11.419 no JEF.
+- **Começa** no primeiro dia útil depois da publicação; **publicação** é o primeiro dia útil depois da
+  **disponibilização** no DEJT (Lei 11.419/2006, art. 4º §§ 3º e 4º). Intimação em audiência conta da
+  audiência (Súmula 197 TST). Intimação pessoal no PJe: da leitura ou do 10º dia (Lei 11.419 art. 5º §3º).
+- **Feriados**: nacionais, estaduais e municipais da sede da vara, os do TRT (portarias: Carnaval, Corpus
+  Christi, dia do servidor, ponto facultativo) e o **recesso de 20/12 a 20/01**, que suspende prazo (CLT
+  art. 775-A). A tabela de feriados por TRT é do `prazo_legal.py` do trabalhista — o do Prev não serve.
+- **Embargos de declaração interrompem** o prazo do recurso principal (CPC art. 1.026): ao registrar ED
+  cumprido, o prazo de RO/RR fica SUSPENSO e reabre com a publicação do julgamento.
+
+### Os tipos, com o prazo legal em dias úteis
+
+| tipo | dias | fundamento | observação |
+|---|---|---|---|
+| Réplica (manifestação sobre a defesa) | **o juízo fixa**; sistema propõe 5 | CPC art. 218 §3º c/c CLT art. 769; defesa em audiência: art. 847 | **[CONFIRMAR]** o padrão do TRT-2 (5, 10 ou 15?). Na una a réplica é oral ou no prazo que o juiz dá na ata. |
+| Manifestação sobre documentos | juízo fixa; propõe 5 | CPC art. 437 §1º (15 dias) c/c 769 | **[CONFIRMAR]** |
+| Razões finais | juízo fixa; propõe 5 | CLT art. 850: 10 minutos orais; memoriais no prazo do juízo | Só é prazo quando convertida em memoriais. |
+| Manifestação sobre laudo | juízo fixa; propõe 15 | CPC art. 477 §1º (15 dias) c/c 769 | Perícia médica e técnica. **[CONFIRMAR]**: as varas dão 5, 10 ou 15? |
+| Embargos de declaração | **5** | CLT art. 897-A; CPC art. 1.023 | Interrompem o recurso principal. |
+| Recurso ordinário | **8** | CLT art. 895, I | Reclamante com gratuidade: sem depósito (art. 899 §10) nem custas (art. 790 §3º) **[CONFIRMAR]** se a gratuidade é pedida como regra. |
+| Contrarrazões | **8** | CLT art. 900; Lei 5.584/70 art. 6º | Abre quando a reclamada recorre. |
+| Recurso adesivo | **8** | CPC art. 997 §2º; Súmula 283 TST | Mesmo prazo das contrarrazões. |
+| Recurso de revista | **8** | CLT art. 896 | No sumaríssimo só por súmula/CF (§9º). |
+| Agravo de instrumento (AIRR) | **8** | CLT art. 897, b | Contra o despacho que nega o RR. |
+| Agravo interno / regimental | **8** | CLT art. 896 §12; regimentos; Lei 5.584 art. 6º | |
+| Embargos à SDI (TST) | **8** | CLT art. 894, II | |
+| Impugnação aos cálculos | **8** | CLT art. 879 §2º | Sob pena de preclusão, item a item. Também na provisória. |
+| Impugnação à sentença de liquidação | **5** | CLT art. 884 §3º | Do exequente, mesmo prazo dos embargos do executado. |
+| Agravo de petição | **8** | CLT art. 897, a | Contra homologação, extinção e decisões na execução. |
+| Manifestação na execução | juízo fixa; propõe 5 | CPC art. 218 §3º | Bens negativos, alvará, parcelamento. |
+| Emenda à inicial | **15** | CPC art. 321 c/c CLT art. 769 | **[CONFIRMAR]** se alguma vara fixa 10. |
+| Outro | juízo fixa; propõe 5 | CPC art. 218 §3º | Nome do ato na descrição. |
+
+O que a CLT não cobre vem do CPC por aplicação subsidiária (CLT art. 769; CPC art. 15). Onde a lei cala e
+o juiz também, 5 dias (CPC art. 218 §3º) — e o sistema **propõe**, a pessoa **confirma**; a correção fica no
+histórico. Isso é a regra 6 do Prev (a máquina propõe, a pessoa decide) aplicada ao prazo.
+
+---
+
+## 5. INCIDENTE — o cliente que trocou de advogado
+
+ROUBADO (66), RECEBIDO POR ELES (38), RECUPERADO (18), REVOGAÇÃO, NOTIFICAÇÃO e as PROVIDENCIAS ("NOTIFICAR",
+"TRAVAR O RECEBIMENTO") viviam no STATUS DO PROCESSO e em campos soltos — e o script de autopreenchimento os
+tratava como "protegidos", porque são decisão humana. **Não são fase do processo**: o processo continua em
+juízo, com outro patrono. São um ciclo à parte, ligado ao processo por `incidentes.processo_id`, com o
+objetivo de **receber os honorários pelo trabalho feito ou trazer o cliente de volta**.
+
+```mermaid
+stateDiagram-v2
+    [*] --> DETECTADO
+    DETECTADO --> NOTIFICADO : notificação enviada 🔒
+    DETECTADO --> HONORARIOS_RESERVADOS : reserva pedida ao juízo (ADVOGADO) 🔒
+    NOTIFICADO --> HONORARIOS_RESERVADOS : reserva pedida (ADVOGADO) 🔒
+    DETECTADO --> RECUPERADO : cliente voltou
+    NOTIFICADO --> RECUPERADO : cliente voltou
+    HONORARIOS_RESERVADOS --> RECUPERADO : cliente voltou
+    NOTIFICADO --> HONORARIOS_RECEBIDOS : valor recebido 🔒
+    HONORARIOS_RESERVADOS --> HONORARIOS_RECEBIDOS : valor recebido 🔒
+    NOTIFICADO --> PERDIDO : DIREÇÃO, motivo
+    HONORARIOS_RESERVADOS --> PERDIDO : DIREÇÃO, motivo
+    DETECTADO --> SEM_OBJETO : alarme falso, motivo
+    PERDIDO --> NOTIFICADO : reabrir cobrança (DIREÇÃO)
+    RECUPERADO --> [*]
+    HONORARIOS_RECEBIDOS --> [*]
+    PERDIDO --> [*]
+    SEM_OBJETO --> [*]
+```
+
+| etapa | o que significa | quem toca | tempo aceitável | o que trava |
+|---|---|---|---|---|
+| **DETECTADO** | Apareceu outro patrono nos autos ou o cliente avisou. Confirmar nos autos (há revogação juntada? — `revogacao_nos_autos_em`), avisar o cliente (`cliente_avisado_em`) e decidir. Notificação "redigida" e não enviada ainda é detectado. | Jurídico | 5 dias | — |
+| **NOTIFICADO** | Notificação extrajudicial enviada cobrando os honorários pelo trabalho feito. Recebimento e resposta são datas na linha. Sem resposta em 30 dias, pedir reserva nos autos. **[CONFIRMAR 21]**: existe modelo da notificação? quem redige, quem envia? | Jurídico | 30 dias | Entrar exige **data de envio e cópia** da notificação. |
+| **HONORARIOS_RESERVADOS** | Pedido de reserva/destaque de honorários protocolado nos autos (EOAB art. 22 §4º) — é o "travar o recebimento / travar última parcela" das PROVIDENCIAS. O juízo retém a parcela; acompanha-se junto com a execução. | Jurídico (advogado) | sem SLA | Entrar exige a **petição protocolada**. |
+| **RECUPERADO** (final) | O cliente voltou. Conferir procuração nova e revogação do outro nos autos. | Jurídico | — | — |
+| **HONORARIOS_RECEBIDOS** (final) | O escritório recebeu o que lhe cabia. | Financeiro | — | Valor recebido registrado. |
+| **PERDIDO** (final) | Cliente e honorários perdidos — o "recebido por eles". **Só a Direção fecha assim, com motivo**: é o número que mede o roubo de cliente, e não pode ser fechado no automático. | Direção | — | Papel DIREÇÃO + motivo. |
+| **SEM_OBJETO** (final) | Não houve troca: substabelecimento nosso, homônimo, leitura errada do diário. | Jurídico | — | Motivo. |
+
+**Como se liga ao processo.** Enquanto há incidente aberto, a ficha do processo mostra o sinal em toda tela
+que leva a ele (padrão `alertas.py` do Prev). Quando o processo chega a RECEBENDO com incidente aberto, a
+tela avisa antes do repasse — é exatamente o momento de reservar. A fase do processo **não muda** por causa
+do incidente. O tipo do incidente (TROCA_DE_ADVOGADO, REVOGACAO_PELO_CLIENTE, **[CONFIRMAR]** outros) é
+atributo.
+
+**REVOGAÇÃO tem dois sentidos** na base **[CONFIRMAR 20]**: em 529 processos normais significa que *nós*
+juntamos a revogação do advogado anterior do cliente (vira `processos.revogou_patrono_anterior` + data); nos
+roubados significa que o cliente *nos* revogou (vira `incidentes.revogacao_nos_autos_em`). A migração usa o
+STATUS DO PROCESSO para decidir o sentido; os 9 recados ("BRUNO - juntar revogação nestes autos") viram
+tarefa com dono.
+
+---
+
+## 6. O que NÃO virou máquina, e por quê
+
+| candidato | decisão | porquê |
+|---|---|---|
+| **Pós-processual** (recebimento, repasse, arquivamento) | **Fase do PROCESSO**, não máquina | RECEBENDO e ENCERRADO já são o recebimento e o arquivo. O **repasse** é dinheiro: linha em `repasses` (valor, data, comprovante), exigida pelo gate antes de encerrar — o STATUS REPASSE que ficou vazio em 556/556 vira obrigação. O **arquivamento** físico/Drive é tarefa que nasce ao encerrar. Uma quarta tabela "PÓS" só repetiria o processo, como a do Airtable repetiu (99 órfãos, valores copiados no instante e nunca atualizados). **[CONFIRMAR 3, 26, 28]** |
+| **Status internos do processo** (conhecimento, recursal, CumPrSe, cálculo, acordo, pagamento) | **Atributos derivados de fatos**, ou lista fechada sem gatilho | "Aguardando audiência/sentença/acórdão" são o próximo evento da agenda; "sentenciada" é a sentença registrada; TRT/TST é o recurso pendente; cálculo é a tabela `calculos`; pagamento é a tabela de parcelas. A **execução** ganha `situacao_execucao` com 12 valores ordenados, sem gatilho, porque não é linear. Cada opção está em `etapa-ou-atributo.md`. |
+| **Testemunha** (PENDENTE → A CONFIRMAR → CONFIRMADA; DESCARTADA, NAO USAR) | Atributo com CHECK | Cinco valores, caminho óbvio, sem gate que valha a pena. O que importa para a audiência é `confirmada_em`. |
+| **Perícia** (médica, técnica, contábil) | Tabela `pericias` com datas (designada, realizada, laudo), sem máquina | Três datas descrevem tudo; o prazo de manifestação sobre o laudo é o fluxo PRAZO. |
+| **Recurso** (RO, RR, AIRR, AP…) | Tabela `recursos` (tipo, de quem, interposto em, resultado, julgado em), sem máquina | O ciclo de vida do recurso é o prazo (fluxo 4) mais o resultado (fato). Responde "recurso de quem" (pergunta 22) e dá o grau da fase RECURSAL. |
+| **Tarefa** | Já existe no Prev (`tarefas`, distribuição automática) | AND. NECESSÁRIO, PROVIDENCIAS, AVISOS, os recados de REVOGAÇÃO: tudo tarefa com dono e prazo. |
+
+---
+
+## 7. Decisões que tomei sozinho — você pode reverter qualquer uma
+
+1. **Petição inicial em quatro etapas** (pendente, em redação, aguardando aprovação, aprovada), em vez de uma
+   etapa PETIÇÃO com status. Motivo: o gargalo de aprovação precisa de dono e SLA visíveis. Reverter =
+   fundir em uma etapa e mover o status para atributo.
+2. **Contatos 1º/2º/3º da entrevista como contador**, não etapas. Reverter = três etapas entre ENTREVISTA
+   e o agendamento — eu não recomendo: 2 registros em 797 usam.
+3. **CANCELADO absorve as três DESISTÊNCIAs** e o CANCELAMENTO, com motivo obrigatório. Reverter = etapa
+   DESISTENCIA separada no cliente, como fiz no processo.
+4. **DISTRIBUIDO como final do cliente**, com "novo caso da mesma pessoa" reabrindo o funil. Alternativa: um
+   registro de "caso" por pessoa (a pessoa fica ACEITO, cada caso pré-processual é linha própria). Faz
+   diferença para quem tem dois processos; hoje são poucos.
+5. **Fase EXECUCAO_PROVISORIA vence RECURSAL** quando as duas coexistem. Reverter = RECURSAL como fase e o
+   CumPrSe como flag.
+6. **DESISTENCIA do processo como etapa final separada de ENCERRADO.** Reverter = resultado_final =
+   DESISTENCIA dentro de ENCERRADO.
+7. **SOBRESTADO só volta para a fase anterior** (gate lê o histórico). Reverter = permitir qualquer destino
+   com papel ADVOGADO.
+8. **situacao_execucao é atributo com lista fechada, não sub-máquina.** Reverter = fluxo 6 com as 12
+   situações e gatilho — eu recomendo esperar seis meses de uso para ver se o caminho é estável.
+9. **Incidente é a 5ª máquina**, e PERDIDO só a Direção fecha. Reverter = flags no processo (roubado_em,
+   recuperado_em) sem ciclo — perde-se a fila "notificar" e "reservar".
+10. **Prazo PERDIDO só gestor**, e SEM_OBJETO existe. Reverter = qualquer papel fecha perdido.
+11. **N = 7 dias corridos** para o alerta de audiência sem preparação; um N só, para todos os tipos.
+12. **SLAs**: LEAD 3, DOCUMENTACAO 7, ENTREVISTA 5, petição 2+3+2+2, STAND_BY 60; fases judiciais 365;
+    RECEBENDO 30; incidente DETECTADO 5, NOTIFICADO 30. Todos são um `UPDATE fluxo_etapas`.
+13. **Padrões de prazo quando o juízo fixa**: réplica 5, documentos 5, razões finais 5, laudo 15, emenda 15,
+    execução 5. São `dias_padrao` em `prazo_tipos`; a pessoa corrige na tela.
+14. **Setores** usados no mapa: Captação, Documentação, Atendimento (entrevistadores e responsáveis
+    iniciais), Jurídico, Gestão (quem aprova), Financeiro, Direção, Publicação. A base só tem FUNCOES
+    **[CONFIRMAR 30]**; `equipe.py` traduz.
+15. **Dois gatilhos além do mapa**: prescrição bienal barra o INSERT do processo sem dispensa
+    (`gov_prescricao_bienal`); prazo em dias corridos sem justificativa, CUMPRIDO sem data e PERDIDO sem
+    motivo são recusados (`gov_prazo_regras`). E um terceiro, `gov_nasce_na_inicial`: linha nova só nasce na
+    etapa inicial — a migração desliga de propósito e religa no fim.
+
+## 8. O que depende das suas respostas (perguntas 1–34)
+
+| pergunta | o que muda no mapa se a resposta for outra |
+|---|---|
+| 3 (PÓS órfãos) | 99 registros ficam em `airtable_bruto` ou viram processos sem número |
+| 4 (Astrea) | se continua, o fluxo PRAZO nasce das publicações dele; senão, do DEJT/AASP direto |
+| 5 (leads) | etapa LEAD fica ou sai; se sai, o fluxo começa em DOCUMENTACAO com `contrato_assinado` no INSERT |
+| 6 (SLA 15/20) | os SLAs das seis etapas do pré e o farol da view |
+| 7 (PENDENCIAS) | como migrar 551 fichas para `documentos_pendentes` — e se o gate `documentos_obrigatorios` fecha as 172 COMPLETAS com 4 marcações |
+| 8 (quem aprova) | o papel da transição AGUARDANDO_APROVACAO → APROVADA (GESTOR hoje) |
+| 9 (entrevista) | modalidade como atributo do evento; se o resumo fica no Drive, o gate `entrevista_registrada` aceita link |
+| 10 (RI 15 dias) | o farol da RI e para quem nasce a tarefa no 15º dia |
+| 11 (prescrição) | se a quinquenal entra como cálculo do período alcançado na ficha |
+| 14 (ad video) | item do checklist da audiência fica, sai, ou vira evento com responsável |
+| 16 (complexidade) | se A/B/C muda a distribuição de tarefa (peso) ou só o relatório |
+| 17 (UNA-RS, classes) | rito no processo; classes de incidente na tabela de recursos |
+| 18 (status execução) | a lista e a ordem de `situacao_execucao` |
+| 19 (AND. NECESSÁRIO) | confirma que vira tarefa |
+| 20 (REVOGAÇÃO) | os dois sentidos e como a migração separa |
+| 21 (roubado) | as etapas do INCIDENTE e quem toca cada uma |
+| 22 (recurso de quem) | a coluna `recursos.parte` e o grau da fase RECURSAL |
+| 24 (notas) | `decisoes.nota` fica ou sai |
+| 26 (repasse) | onde se grava o repasse; o gate `repasse_registrado` lê a tabela de qualquer jeito |
+| 28 (três arquivamentos) | fase ENCERRADO + resultado ARQUIVADO + tarefa "arquivar pasta" |
+| 30 (organograma) | os grupos das etapas e a hierarquia de papéis (ADVOGADO < GESTOR < DIRECAO) |
+
+As demais (1, 2, 12, 13, 15, 23, 25, 27, 29, 31–34) afetam migração, financeiro e integrações — não o mapa.
