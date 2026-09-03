@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% set pg='negado' %}{% block titulo %}Sem acesso{% endblock %}
+{% block corpo %}
+<div class="cartao" style="max-width:520px;margin:8vh auto">
+  <h1 style="margin:0 0 8px">Esta tela não é do seu perfil</h1>
+  <p>Seu perfil é <b>{{ u.papel|lower }}</b>{% if u.setor %}, no setor {{ u.setor }}{% endif %},
+     e ele não alcança <b>{{ tela }}</b>.</p>
+  <p class="sub">A trava é do servidor, não do menu: mesmo com o endereço na mão, o pedido é
+     recusado aqui. Se você precisa desta tela para trabalhar, quem muda isso é a Direção.</p>
+  <p><a href="/">voltar ao início</a></p>
+</div>
+{% endblock %}

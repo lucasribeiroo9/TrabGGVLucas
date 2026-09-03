@@ -1,0 +1,50 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='equipe' %}
+{% block titulo %}Equipe{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Equipe</h1></div>
+<p class="sub">{{ pessoas|length }} pessoa(s) · {{ sem_setor }} ativa(s) sem setor definido.</p>
+
+{% if sem_setor %}
+<div class="aviso">
+  <b>[CONFIRMAR — pergunta 30]</b> A base de origem (FUNCIONARIOS) traz FUNÇÕES, não setor nem
+  organograma. <code>equipe.py</code> nasceu com AJUSTES e CHEFIA <b>vazios</b> de propósito:
+  cargo e chefia inventados apareceriam aqui como se fossem fato, e organograma errado manda
+  tarefa para a pessoa errada. Falta o Lucas fechar a lista de setores e dizer quem chefia
+  cada um.
+</div>
+{% endif %}
+
+<div class="colunas">
+  <div class="cartao">
+    <h2>Setores propostos</h2>
+    <p class="sub">Resposta 8 do Lucas: "existe um setor próprio para cada etapa". Então o
+      setor não é rótulo genérico — é quem responde pela etapa.</p>
+    <ul>{% for s in setores %}<li>{{ s }}</li>{% endfor %}</ul>
+  </div>
+  <div class="cartao">
+    <h2>Setores que a governança usa hoje</h2>
+    <p class="sub">São os nomes que estão em <code>fluxo_etapas.grupo</code>. Enquanto as duas
+      listas não forem a mesma, a tela mostra o grupo da ETAPA (que é dado, vindo da tabela) e
+      a lista ao lado serve só ao cadastro de pessoa. Ver docs/portal-adaptacoes.md.</p>
+    <ul>{% for s in setores_da_governanca %}<li>{{ s.grupo }} → {{ s.grupo|setor_etapa }}</li>{% endfor %}</ul>
+  </div>
+</div>
+
+<div class="cartao"><table>
+<tr><th>pessoa</th><th>setor</th><th>papéis na origem</th><th>responde a</th>
+    <th class="num">tarefas abertas</th><th class="num">processos</th><th>acesso</th><th>ativo</th></tr>
+{% for p in pessoas %}<tr class="{{ '' if p.ativo else 'fim' }}">
+  <td>{{ p.nome }}</td>
+  <td>{{ p.setor or '—' }}</td>
+  <td class="sub">{{ p.papeis or '—' }}</td>
+  <td class="sub">{{ p.supervisor or '—' }}</td>
+  <td class="num">{{ p.abertas }}</td>
+  <td class="num">{{ p.processos }}</td>
+  <td>{{ 'sim' if p.tem_acesso else 'não' }}</td>
+  <td>{{ 'sim' if p.ativo else 'não' }}</td></tr>{% endfor %}
+</table></div>
+
+<p class="sub">Acesso se abre por linha de comando: <code>python3 auth.py equipe</code>. A
+  senha sai provisória e aparece UMA vez — não fica escrita em lugar nenhum do repositório, e
+  na primeira entrada o sistema obriga a trocar.</p>
+{% endblock %}

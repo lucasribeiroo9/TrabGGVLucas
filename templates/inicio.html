@@ -1,0 +1,99 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='inicio' %}
+{% block titulo %}Início{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Bom dia, {{ u.nome.split(' ')[0] }}</h1>
+  <span class="sub" style="margin-left:auto">{{ hoje_iso|data_br }}</span></div>
+
+{# 1. O que faz PARAR. Só entra o que tem gente esperando ou relógio externo
+   correndo — a regra está em agora.py, não aqui. #}
+<div class="cartao destaque">
+  <h2 style="margin:0 0 10px">É para agora{% if fogo %} · {{ fogo|length }}{% endif %}</h2>
+  {% if not fogo %}
+    <p class="sub">Nada parado esperando você. Isto não quer dizer fila vazia — quer dizer
+      que nada tem gente esperando nem relógio externo correndo agora.</p>
+  {% else %}
+  <table>
+    {% for i in fogo %}<tr>
+      <td><a href="{{ i.link }}"><b>{{ i.titulo }}</b></a>
+          {% if i.quem %}<br><span class="sub">{{ i.quem }}</span>{% endif %}</td>
+      <td class="porque">{{ i.motivo }}</td>
+      <td class="mono sub">{{ i.quando or '' }}</td></tr>{% endfor %}
+  </table>
+  {% endif %}
+</div>
+
+<div class="colunas">
+  {# 2. O funil do cliente. Cada etapa é um link para a FILA dela. #}
+  <div class="cartao">
+    <h2>Funil do cliente</h2>
+    <p class="sub">O funil nasce truncado: {{ migrados }} fichas entraram já assinadas, da
+      migração, e a etapa LEAD só passa a existir com a entrada pelo portal
+      ({{ leads }} hoje). A taxa de conversão do primeiro mês diz isto, não a verdade
+      do escritório.</p>
+    <table>
+      {% for e in funil_cliente %}<tr class="{{ 'fim' if e.tipo=='FINAL' }}">
+        <td class="mono sub">{{ e.ordem }}</td>
+        <td><a href="/clientes?status={{ e.codigo }}">{{ e.etapa }}</a></td>
+        <td class="sub">{{ e.grupo|setor_etapa }}</td>
+        <td class="num"><b>{{ e.registros }}</b></td>
+        <td class="sub">{% if e.sla_dias %}SLA {{ e.sla_dias }}d{% endif %}</td></tr>{% endfor %}
+    </table>
+  </div>
+
+  {# 3. O ciclo do processo. #}
+  <div class="cartao">
+    <h2>Ciclo do processo</h2>
+    <table>
+      {% for e in funil_processo %}<tr class="{{ 'fim' if e.tipo=='FINAL' }}">
+        <td class="mono sub">{{ e.ordem }}</td>
+        <td><a href="/processos?fase={{ e.codigo }}">{{ e.etapa }}</a></td>
+        <td class="sub">{{ e.grupo|setor_etapa }}</td>
+        <td class="num"><b>{{ e.registros }}</b></td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+
+<div class="colunas">
+  <div class="cartao">
+    <h2>O relógio de fora</h2>
+    <table>
+      <tr><td><a href="/prazos">Prazos abertos</a>
+          {{ info('Contagem em dias úteis, CLT art. 775. A publicação é o primeiro dia útil
+                   seguinte à disponibilização no DEJT, e o prazo começa no primeiro dia útil
+                   depois dela.') }}</td>
+        <td class="num"><b>{{ prazos_abertos }}</b></td></tr>
+      <tr><td><a href="/audiencias">Audiências nos próximos 7 dias</a></td>
+        <td class="num"><b>{{ audiencias_semana }}</b></td></tr>
+      <tr><td><a href="/conferencias">Conferências abertas</a>
+          {{ info('Onde a CÓPIA e a PROCESSUAL discordaram na migração. Conferir é abrir o
+                   registro e escolher um lado — ninguém escolhe em silêncio.') }}</td>
+        <td class="num"><b>{{ conferencias_abertas }}</b></td></tr>
+      {% for f in atrasados %}<tr><td>Pré-processual no farol {{ f.farol|lower }}
+        {{ info('Dias desde a assinatura sem distribuir: 15 amarelo, 20 vermelho. Rescisão
+                 indireta já é vermelha aos 15 — o contrato ainda está correndo.') }}</td>
+        <td class="num"><b>{{ f.n }}</b></td></tr>{% endfor %}
+      {% for e in estagnados %}<tr><td>Parados além do SLA em {{ e.entidade }}</td>
+        <td class="num"><b>{{ e.n }}</b></td></tr>{% endfor %}
+    </table>
+  </div>
+
+  <div class="cartao">
+    <h2>Suas tarefas <span class="sub">{{ minhas|length }} abertas</span></h2>
+    <table>
+      {% for t in minhas %}<tr>
+        <td>{% if t.proc_id %}<a href="/processos/{{ t.processo_id }}">{{ t.titulo }}</a>
+            {% elif t.cliente_id %}<a href="/clientes/{{ t.cliente_id }}">{{ t.titulo }}</a>
+            {% else %}{{ t.titulo }}{% endif %}
+            {% if t.cliente %}<br><span class="sub">{{ t.cliente }}</span>{% endif %}</td>
+        <td><span class="marca-etapa">{{ t.prioridade|lower }}</span></td>
+        <td class="mono {{ 'atrasado' if t.prazo and t.prazo < hoje_iso }}">{{ t.prazo|data_br }}</td>
+        <td><form method="post" action="/tarefa/{{ t.id }}/status">
+          <input type="hidden" name="voltar" value="/">
+          <button name="status" value="CONCLUIDA" class="leve">concluir</button></form></td>
+        </tr>{% endfor %}
+      {% if not minhas %}<tr><td class="sub">nenhuma tarefa aberta no seu nome</td></tr>{% endif %}
+    </table>
+    <p class="sub"><a href="/tarefas">todas as tarefas</a></p>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% set pg='senha' %}{% block titulo %}Trocar a senha{% endblock %}
+{% block corpo %}
+<div class="cartao" style="max-width:420px;margin:6vh auto">
+  <h1 style="margin:0 0 4px">Trocar a senha</h1>
+  <p class="sub" style="margin:0 0 16px">Enquanto a senha for provisória o sistema não deixa
+    andar para outra tela — é a única forma de garantir que a senha entregue à mão deixe de
+    valer.</p>
+  {% if erro %}<div class="aviso erro">{{ erro }}</div>{% endif %}
+  <form method="post">
+    <label style="display:block;margin-bottom:10px">Senha atual
+      <input type="password" name="atual" autocomplete="current-password" required style="width:100%"></label>
+    <label style="display:block;margin-bottom:14px">Senha nova (mínimo 8 caracteres)
+      <input type="password" name="nova" autocomplete="new-password" minlength="8" required style="width:100%"></label>
+    <button type="submit">trocar</button>
+  </form>
+</div>
+{% endblock %}

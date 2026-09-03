@@ -1,0 +1,44 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='testemunhas' %}
+{% block titulo %}Testemunhas{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Testemunhas</h1></div>
+<p class="sub">{{ total }} testemunha(s) neste recorte. Uma testemunha serve a mais de um
+  caso — a ligação é por vínculo, não por campo na ficha do processo.</p>
+
+<form method="get" class="filtros">
+  <input type="text" name="q" value="{{ p.get('q','') }}" placeholder="nome">
+  <select name="empresa"><option value="">reclamada — qualquer</option>
+    {% for e in empresas_l %}<option value="{{ e.id }}" {{ 'selected' if p.get('empresa')==e.id|string }}>{{ e.nome }} ({{ e.n }})</option>{% endfor %}</select>
+  <select name="origem"><option value="">canal — qualquer</option>
+    <option value="JURIDICO" {{ 'selected' if p.get('origem')=='JURIDICO' }}>jurídico (formulário interno)</option>
+    <option value="COMERCIAL" {{ 'selected' if p.get('origem')=='COMERCIAL' }}>comercial (captador)</option>
+  </select>
+  <button type="submit">filtrar</button><a href="/testemunhas" class="chip">limpar</a>
+</form>
+<div class="filtros">
+  <a href="/testemunhas{{ qs(request, situacao=None) }}" class="chip {{ 'on' if not p.get('situacao') }}">todas</a>
+  {% for s in situacoes %}<a href="/testemunhas{{ qs(request, situacao=s.situacao) }}"
+    class="chip {{ 'on' if p.get('situacao')==s.situacao }}">{{ s.situacao|rotulo }} · {{ s.n }}</a>{% endfor %}
+</div>
+
+<div class="cartao"><table>
+<tr><th>nome</th><th>reclamada</th><th>vínculo</th><th>situação</th><th>tem processo?</th>
+    <th class="num">cobranças</th><th>último contato</th><th class="num">casos</th><th>canal</th></tr>
+{% for t in linhas %}<tr>
+  <td><a href="/testemunhas/{{ t.id }}">{{ t.nome }}</a>
+      {% if t.duplicado %}<span class="sub">possível duplicada</span>{% endif %}</td>
+  <td>{{ t.empresa or '—' }}</td>
+  <td class="sub">{{ t.vinculo|rotulo or '—' }}</td>
+  <td><span class="marca-etapa">{{ t.situacao|rotulo }}</span></td>
+  <td>{% if t.tem_processo %}sim{% elif t.tem_processo is none %}—{% else %}não{% endif %}</td>
+  <td class="num">{{ t.cobrancas or '' }}</td>
+  <td class="mono">{{ t.ultimo_contato_em|data_br }}</td>
+  <td class="num">{{ t.vinculos }}</td>
+  <td class="sub">{{ t.origem|lower or '—' }}</td></tr>{% endfor %}
+{% if not linhas %}<tr><td colspan="9" class="sub">nada neste recorte</td></tr>{% endif %}
+</table></div>
+
+<p class="sub">"Tem processo?" existe porque a reclamada sempre contradita a testemunha que
+  também litiga contra a mesma empresa. A <b>Súmula 357 do TST</b> diz que isso NÃO a torna
+  suspeita — mas é preciso saber antes da audiência, não descobrir na hora.</p>
+{% endblock %}

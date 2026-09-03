@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% set pg='entrar' %}{% block titulo %}Entrar · GGV Trabalhista{% endblock %}
+{% block corpo %}
+<div class="cartao" style="max-width:380px;margin:8vh auto">
+  <h1 style="margin:0 0 4px">GGV Trabalhista</h1>
+  <p class="sub" style="margin:0 0 16px">Sistema operacional do escritório. Entre com o
+    e-mail do escritório.</p>
+  {% if erro %}<div class="aviso erro">{{ erro }}</div>{% endif %}
+  <form method="post">
+    <label style="display:block;margin-bottom:10px">E-mail
+      <input type="email" name="email" autocomplete="username" required autofocus style="width:100%"></label>
+    <label style="display:block;margin-bottom:14px">Senha
+      <input type="password" name="senha" autocomplete="current-password" required style="width:100%"></label>
+    <button type="submit" style="width:100%">entrar</button>
+  </form>
+  <p class="sub" style="margin-top:14px">A senha nasce provisória e é mostrada uma vez só, na
+    hora em que o acesso é criado. Ela não fica escrita em lugar nenhum do repositório.</p>
+</div>
+{% endblock %}

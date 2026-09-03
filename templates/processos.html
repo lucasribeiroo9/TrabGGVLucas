@@ -1,0 +1,58 @@
+{% extends "base.html" %}{% from "macros.html" import sinal, info %}{% set pg='processos' %}
+{% block titulo %}Processos{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Processos</h1></div>
+<p class="sub">{{ total }} processo(s) neste recorte · valor da causa somado
+  {{ soma|centavos }}
+  {{ info('Valor da causa é o valor ATRIBUÍDO à causa, para fixar competência e rito — não é
+           o que o cliente vai receber. O que se recebe está em Dinheiro, na ficha.') }}
+  {% if linhas|length < total %} · mostrando os {{ linhas|length }} primeiros{% endif %}</p>
+
+<form method="get" class="filtros">
+  <input type="text" name="q" value="{{ p.get('q','') }}" placeholder="nome, parte ou número">
+  <select name="trt"><option value="">TRT</option>
+    {% for t in trts %}<option value="{{ t.trt }}" {{ 'selected' if p.get('trt')==t.trt }}>TRT {{ t.trt }} ({{ t.n }})</option>{% endfor %}</select>
+  <select name="vara"><option value="">vara</option>
+    {% for v in varas %}<option value="{{ v.vara }}" {{ 'selected' if p.get('vara')==v.vara }}>{{ v.vara }} ({{ v.n }})</option>{% endfor %}</select>
+  <select name="advogado"><option value="">advogado</option>
+    {% for a in advogados %}<option value="{{ a.id }}" {{ 'selected' if p.get('advogado')==a.id|string }}>{{ a.nome }} ({{ a.n }})</option>{% endfor %}</select>
+  <select name="empresa"><option value="">reclamada</option>
+    {% for e in empresas_l %}<option value="{{ e.id }}" {{ 'selected' if p.get('empresa')==e.id|string }}>{{ e.nome }} ({{ e.n }})</option>{% endfor %}</select>
+  <select name="rito"><option value="">rito</option>
+    {% for r in ['ORDINARIO','SUMARISSIMO','SUMARIO'] %}<option value="{{ r }}" {{ 'selected' if p.get('rito')==r }}>{{ r|lower }}</option>{% endfor %}</select>
+  <select name="complexidade"><option value="">complexidade</option>
+    {% for c in ['A','B','C'] %}<option value="{{ c }}" {{ 'selected' if p.get('complexidade')==c }}>{{ c }}</option>{% endfor %}</select>
+  <button type="submit">filtrar</button><a href="/processos" class="chip">limpar</a>
+</form>
+
+<div class="filtros">
+  <a href="/processos{{ qs(request, fase=None) }}" class="chip {{ 'on' if not p.get('fase') }}">todas as fases</a>
+  {% for f in fases %}<a href="/processos{{ qs(request, fase=f.codigo) }}"
+    class="chip {{ 'on' if p.get('fase')==f.codigo }}">{{ f.nome }} · {{ f.registros }}</a>{% endfor %}
+</div>
+<div class="filtros">
+  <span class="sub">qualidade do cadastro:</span>
+  <a href="/processos?falta=empresa" class="chip {{ 'on' if p.get('falta')=='empresa' }}">sem reclamada · {{ qualidade.sem_empresa }}</a>
+  <a href="/processos?falta=numero" class="chip {{ 'on' if p.get('falta')=='numero' }}">sem número · {{ qualidade.sem_numero }}</a>
+  <a href="/processos?falta=valor" class="chip {{ 'on' if p.get('falta')=='valor' }}">sem valor · {{ qualidade.sem_valor }}</a>
+  {% for x in execucoes %}<a href="/processos{{ qs(request, situacao_execucao=x.s) }}"
+    class="chip {{ 'on' if p.get('situacao_execucao')==x.s }}">{{ x.s|rotulo }} · {{ x.n }}</a>{% endfor %}
+</div>
+
+<div class="cartao"><table>
+<tr><th>número</th><th>parte</th><th>fase</th><th>reclamada</th><th>TRT/vara</th>
+    <th>rito</th><th class="num">valor da causa</th><th>advogado</th><th></th></tr>
+{% for l in linhas %}<tr>
+  <td class="mono"><a href="/processos/{{ l.id }}">{{ l.numero_cnj|cnj }}</a></td>
+  <td>{% if l.cliente_id %}<a href="/clientes/{{ l.cliente_id }}">{{ l.parte }}</a>{% else %}{{ l.parte }}{% endif %}</td>
+  <td><span class="marca-etapa">{{ l.fase_nome or l.fase|rotulo }}</span>
+      {% if l.situacao_execucao %}<br><span class="sub">{{ l.situacao_execucao|rotulo }}</span>{% endif %}</td>
+  <td>{{ l.empresa or '—' }}</td>
+  <td class="sub">{{ l.trt or '?' }} / {{ l.vara or '?' }}</td>
+  <td class="sub">{{ l.rito|rotulo or '—' }}{% if l.complexidade %} · {{ l.complexidade }}{% endif %}</td>
+  <td class="num mono">{{ l.valor_causa_centavos|centavos }}</td>
+  <td class="sub">{{ l.advogado or '—' }}</td>
+  <td>{{ sinal(sinais.get(l.id)) }}</td></tr>{% endfor %}
+{% if not linhas %}<tr><td colspan="9" class="sub">nada neste recorte</td></tr>{% endif %}
+</table></div>
+{% endblock %}

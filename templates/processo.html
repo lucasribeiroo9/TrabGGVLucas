@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+{% from "macros.html" import governanca, historico_etapas, lista_pendencias, sinal, info %}
+{% set pg='processos' %}{% block titulo %}{{ p.numero_cnj or 'processo' }}{% endblock %}
+{% block corpo %}
+
+<div class="cal-topo">
+  <h1 class="mono">{{ p.numero_cnj|cnj }}</h1>
+  <span class="marca-etapa">{{ p.fase_nome or p.fase|rotulo }}</span>
+  {% for f in fogo %}{{ sinal(f) }}{% endfor %}
+</div>
+
+<div class="cartao">
+  <div class="grade-ficha">
+    <div><span class="rot">reclamante</span>
+      <a href="/clientes/{{ p.cliente_id }}">{{ p.cliente_nome }}</a></div>
+    <div><span class="rot">reclamada</span>
+      {% if p.emp_id %}<a href="/empresas/{{ p.emp_id }}">{{ p.empresa }}</a>{% else %}—{% endif %}
+      {% if p.hist_pagamento %}<span class="sub">pagamento {{ p.hist_pagamento|lower }}</span>{% endif %}
+      {% if p.emp_situacao %}<span class="sub">{{ p.emp_situacao|rotulo }}</span>{% endif %}</div>
+    <div><span class="rot">TRT / vara</span>{{ p.trt or '?' }} / {{ p.vara or '?' }}</div>
+    <div><span class="rot">turma / relator</span>{{ p.turma or '—' }}{% if p.relator %} · {{ p.relator }}{% endif %}</div>
+    <div><span class="rot">rito</span>{{ p.rito|rotulo or '—' }}
+      {% if p.classe_cnj %}<span class="sub">{{ p.classe_cnj }}</span>{% endif %}</div>
+    <div><span class="rot">complexidade</span>{{ p.complexidade or '—' }}
+      {% if p.complexidade_manual %}<span class="sub">definida à mão</span>{% endif %}</div>
+    <div><span class="rot">valor da causa</span><span class="mono">{{ p.valor_causa_centavos|centavos }}</span>
+      {{ info('É o valor ATRIBUÍDO à causa — serve para fixar competência e rito. Não é o que
+               o cliente recebe.') }}</div>
+    <div><span class="rot">distribuição</span>{{ p.distribuicao_em|data_br }}</div>
+    <div><span class="rot">advogado</span>{{ p.advogado or '—' }}</div>
+    <div><span class="rot">captador</span>{{ p.captador or '—' }}</div>
+    {% if p.situacao_execucao %}<div><span class="rot">situação da execução</span>
+      {{ p.situacao_execucao|rotulo }}
+      {% if p.situacao_execucao_original and p.situacao_execucao_original != p.situacao_execucao %}
+      <span class="sub" title="como estava na origem">“{{ p.situacao_execucao_original }}”</span>{% endif %}</div>{% endif %}
+    {% if p.numero_cumprse %}<div><span class="rot">CumPrSe</span><span class="mono">{{ p.numero_cumprse }}</span></div>{% endif %}
+    {% if p.transito_em %}<div><span class="rot">trânsito em julgado</span>{{ p.transito_em|data_br }}</div>{% endif %}
+    {% if p.resultado_final %}<div><span class="rot">resultado final</span>{{ p.resultado_final|rotulo }}</div>{% endif %}
+    {% if p.sobrestado_motivo %}<div><span class="rot">sobrestado porque</span>{{ p.sobrestado_motivo }}</div>{% endif %}
+  </div>
+  {% if p.ultima_movimentacao %}<p class="sub">Última movimentação
+    {{ p.ultima_movimentacao_em|data_br }}: {{ p.ultima_movimentacao }}</p>{% endif %}
+</div>
+
+{{ governanca('processos', p.id, trilha, p.fase, transicoes, percorridas, etapa_agora, 99,
+              '/processos/' ~ p.id) }}
+
+{% if incidentes %}
+<div class="cartao destaque">
+  <h2>Incidente de representação</h2>
+  <p class="sub">O cliente constituiu outro advogado. Não é fase do processo — ele continua em
+    juízo, com outro patrono. O objetivo é receber os honorários pelo trabalho feito
+    (EOAB art. 22 §4º) ou trazer o cliente de volta. Enquanto isto estiver aberto, o
+    RECEBENDO deste processo pede atenção antes de qualquer repasse.</p>
+  <table><tr><th>situação</th><th>tipo</th><th>detectado</th><th>notificado</th><th>recebido</th></tr>
+  {% for i in incidentes %}<tr>
+    <td><span class="marca-etapa">{{ i.situacao_nome or i.situacao|rotulo }}</span></td>
+    <td>{{ i.tipo|rotulo }}</td><td class="mono">{{ i.detectado_em|data_br }}</td>
+    <td class="mono">{{ i.notificacao_enviada_em|data_br }}</td>
+    <td class="mono">{{ i.valor_recebido_centavos|centavos }}</td></tr>{% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<details class="cartao" {{ 'open' if audiencias }}>
+  <summary><b>Audiências</b> · {{ audiencias|length }}</summary>
+  <p class="sub">Cada audiência é uma linha. A redesignação não apaga a anterior — a data
+    nova é linha nova, ligada à antiga.</p>
+  <table><tr><th>quando</th><th>tipo</th><th>modalidade</th><th>situação</th><th>resultado</th>
+    <th>motivo</th><th>preparação</th></tr>
+  {% for a in audiencias %}<tr>
+    <td class="mono"><a href="/audiencias/{{ a.id }}">{{ a.data_hora[:16] if a.data_hora else 'sem data' }}</a></td>
+    <td>{{ a.tipo|rotulo or '—' }}</td><td class="sub">{{ a.modalidade|rotulo or '—' }}</td>
+    <td><span class="marca-etapa">{{ a.situacao_nome or a.situacao|rotulo }}</span></td>
+    <td>{{ a.resultado|rotulo or '—' }}</td>
+    <td class="sub">{{ a.motivo|rotulo or '' }}</td>
+    <td class="sub">{{ [a.cliente_orientado_em, a.testemunhas_confirmadas_em, a.advideo_em,
+                        a.documentos_conferidos_em]|select|list|length }}/4</td></tr>{% endfor %}
+  {% if not audiencias %}<tr><td colspan="7" class="sub">nenhuma audiência cadastrada</td></tr>{% endif %}
+  </table>
+</details>
+
+<details class="cartao" {{ 'open' if prazos }}>
+  <summary><b>Prazos</b> · {{ prazos|select('equalto', None)|list|length or prazos|length }}</summary>
+  <table><tr><th>tipo</th><th>origem</th><th>disponibilizado</th><th>publicado</th><th>começa</th>
+    <th>vence</th><th>úteis</th><th>situação</th><th>quem</th></tr>
+  {% for z in prazos %}<tr>
+    <td>{{ z.tipo_nome or z.tipo|rotulo or '—' }}
+      {{ info(z.fundamento, z.tipo_nome) }}
+      {% if z.descricao %}<br><span class="sub">{{ z.descricao }}</span>{% endif %}</td>
+    <td class="sub">{{ z.origem|rotulo }}</td>
+    <td class="mono sub">{{ z.disponibilizado_em|data_br }}</td>
+    <td class="mono sub">{{ z.publicado_em|data_br }}</td>
+    <td class="mono sub">{{ z.inicio|data_br }}</td>
+    <td class="mono">{{ z.vencimento|data_br }}</td>
+    <td class="num {{ 'atrasado' if prazo_uteis.get(z.id) is not none and prazo_uteis[z.id] < 1 }}">
+      {{ prazo_uteis.get(z.id) if prazo_uteis.get(z.id) is not none else '—' }}</td>
+    <td><span class="marca-etapa">{{ z.situacao|rotulo }}</span>
+      {% if z.contagem != 'UTEIS' %}<br><span class="porque">em dias corridos:
+        {{ z.contagem_motivo }}</span>{% endif %}</td>
+    <td class="sub">{{ z.responsavel or '—' }}</td></tr>{% endfor %}
+  {% if not prazos %}<tr><td colspan="9" class="sub">nenhum prazo registrado</td></tr>{% endif %}
+  </table>
+  <p class="sub">Contagem em dias úteis (CLT art. 775); publicação é o primeiro dia útil
+    seguinte à disponibilização no DEJT, e o prazo começa no primeiro dia útil depois dela
+    (Lei 11.419/2006, art. 4º §§ 3º e 4º). Intimação em audiência conta da audiência
+    (Súmula 197 TST).</p>
+</details>
+
+{% if pericias %}
+<details class="cartao"><summary><b>Perícias</b> · {{ pericias|length }}</summary>
+  <table><tr><th>tipo</th><th>quando</th><th>perito</th><th>laudo</th></tr>
+  {% for pc in pericias %}<tr><td>{{ pc.tipo|rotulo }}</td>
+    <td class="mono">{{ pc.data_hora[:16] if pc.data_hora else '—' }}</td>
+    <td>{{ pc.perito or '—' }}</td><td class="mono">{{ pc.laudo_em|data_br }}</td></tr>{% endfor %}
+  </table></details>
+{% endif %}
+
+<details class="cartao" {{ 'open' if decisoes or recursos }}>
+  <summary><b>Decisões e recursos</b> · {{ decisoes|length }} decisão(ões),
+    {{ recursos|length }} recurso(s)</summary>
+  <table><tr><th>tipo</th><th>data</th><th>resultado</th><th>nota</th><th>grau</th><th>órgão</th></tr>
+  {% for d in decisoes %}<tr><td>{{ d.tipo|rotulo }}</td><td class="mono">{{ d.data|data_br }}</td>
+    <td>{{ d.resultado_objetivo|rotulo or '—' }}</td>
+    <td>{{ d.nota|lower or '—' }}
+      {{ info('A NOTA é avaliação nossa (ruim/média/ótima); o RESULTADO é o que a decisão diz.
+               Na origem os dois dividiam o mesmo campo.') }}</td>
+    <td class="sub">{{ d.grau|rotulo or '—' }}</td><td class="sub">{{ d.orgao or '—' }}</td></tr>{% endfor %}
+  {% if not decisoes %}<tr><td colspan="6" class="sub">nenhuma decisão registrada — e é ela que
+    destrava a mudança de fase</td></tr>{% endif %}
+  </table>
+  {% if recursos %}<table style="margin-top:10px">
+    <tr><th>recurso</th><th>de quem</th><th>grau</th><th>interposto</th><th>julgado</th><th>resultado</th></tr>
+    {% for r in recursos %}<tr><td>{{ r.tipo|rotulo }}</td><td>{{ r.de_quem|rotulo or '—' }}</td>
+      <td class="sub">{{ r.grau or '—' }}</td><td class="mono">{{ r.interposto_em|data_br }}</td>
+      <td class="mono">{{ r.julgado_em|data_br }}</td>
+      <td>{{ r.resultado|rotulo or 'pendente' }}</td></tr>{% endfor %}
+  </table>{% endif %}
+</details>
+
+<details class="cartao" {{ 'open' if calculos or acordos or recebimentos }}>
+  <summary><b>Dinheiro</b></summary>
+  <p class="sub">Tudo em centavos no banco; aqui vira texto. Sucumbência é do escritório, paga
+    pela reclamada (art. 791-A CLT); honorário contratual é do escritório, descontado do
+    cliente. São coisas diferentes e somam separado.</p>
+  {% if calculos %}<table><tr><th>cálculo</th><th class="num">valor</th>
+    <th class="num">sucumbência</th><th class="num">honorário projetado</th><th>juntado</th><th>homologado</th></tr>
+    {% for c in calculos %}<tr><td>{{ c.base|rotulo }}</td>
+      <td class="num mono">{{ c.valor_centavos|centavos }}</td>
+      <td class="num mono">{{ c.sucumbencia_centavos|centavos }}</td>
+      <td class="num mono">{{ c.honorario_centavos|centavos }}</td>
+      <td class="mono">{{ c.juntado_em|data_br }}</td>
+      <td class="mono">{{ c.homologado_em|data_br }}</td></tr>{% endfor %}
+  </table>{% endif %}
+  {% if acordos %}<table style="margin-top:10px"><tr><th>acordo</th><th class="num">valor</th>
+    <th class="num">honorário</th><th>parcelas</th><th>homologado</th><th>situação</th></tr>
+    {% for a in acordos %}<tr><td>#{{ a.id }}</td>
+      <td class="num mono">{{ a.valor_centavos|centavos }}</td>
+      <td class="num mono">{{ a.honorario_centavos|centavos }}</td>
+      <td class="num">{{ a.parcelas or '—' }} × {{ a.valor_parcela_centavos|centavos }}</td>
+      <td class="mono">{{ a.homologado_em|data_br }}</td>
+      <td><span class="marca-etapa">{{ a.situacao|rotulo }}</span>
+        {% if a.quebra_motivo %}<br><span class="porque">{{ a.quebra_motivo }}</span>{% endif %}</td></tr>{% endfor %}
+  </table>{% endif %}
+  {% if parcelas %}<table style="margin-top:10px"><tr><th>parcela</th><th>vencimento</th>
+    <th class="num">valor</th><th>pago</th><th class="num">pago</th></tr>
+    {% for pa in parcelas %}<tr class="{{ 'atrasado' if not pa.pago_em and pa.vencimento and pa.vencimento < hoje_iso }}">
+      <td class="num">{{ pa.numero }}</td><td class="mono">{{ pa.vencimento|data_br }}</td>
+      <td class="num mono">{{ pa.valor_centavos|centavos }}</td>
+      <td class="mono">{{ pa.pago_em|data_br }}</td>
+      <td class="num mono">{{ pa.valor_pago_centavos|centavos }}</td></tr>{% endfor %}
+  </table>
+  {% elif acordos %}<p class="sub">As parcelas ainda não estão cadastradas — a origem guardava
+    só quantas eram, sem os vencimentos, e a migração não inventou datas. Sem elas o sistema
+    não sabe dizer se o acordo está sendo cumprido.</p>{% endif %}
+  {% if recebimentos %}<table style="margin-top:10px"><tr><th>recebido</th><th class="num">valor</th>
+    <th>data</th><th>forma</th></tr>
+    {% for rb in recebimentos %}<tr><td>{{ rb.base|rotulo }}</td>
+      <td class="num mono">{{ rb.valor_centavos|centavos }}</td>
+      <td class="mono">{{ rb.data|data_br }}</td><td class="sub">{{ rb.forma|rotulo or '—' }}</td></tr>{% endfor %}
+  </table>{% endif %}
+  {% if repasses %}<table style="margin-top:10px"><tr><th>repasse ao cliente</th>
+    <th class="num">valor</th><th>data</th><th>entregue ao financeiro</th></tr>
+    {% for rp in repasses %}<tr><td>#{{ rp.id }}</td>
+      <td class="num mono">{{ rp.valor_centavos|centavos }}</td>
+      <td class="mono">{{ rp.data|data_br }}</td>
+      <td class="mono">{{ rp.entregue_ao_financeiro_em|data_br }}
+        {% if rp.sem_valor_motivo %}<br><span class="sub">sem valor a repassar:
+          {{ rp.sem_valor_motivo }}</span>{% endif %}</td></tr>{% endfor %}
+  </table>{% endif %}
+  <p class="sub">O lançamento do repasse é do financeiro (decisão do Lucas). Aqui fica só a
+    referência — houve, quando, quanto — para o sistema poder dizer que o processo terminou
+    de verdade.</p>
+</details>
+
+<details class="cartao" {{ 'open' if pendencias }}>
+  <summary><b>Pendências do processo</b> · {{ pendencias|length }}</summary>
+  <p class="sub">Réplica e reunião pré-audiência pertencem ao processo, não ao cliente — a
+    mesma tabela serve às duas pontas.</p>
+  {{ lista_pendencias(pendencias) }}
+</details>
+
+<details class="cartao">
+  <summary><b>Testemunhas</b> · {{ testemunhas|length }}</summary>
+  <table><tr><th>nome</th><th>vínculo</th><th>situação</th><th>tem processo?</th>
+    <th>intimação pedida</th></tr>
+  {% for t in testemunhas %}<tr><td><a href="/testemunhas/{{ t.id }}">{{ t.nome }}</a></td>
+    <td class="sub">{{ t.vinculo|rotulo or '—' }}</td>
+    <td><span class="marca-etapa">{{ t.situacao|rotulo }}</span></td>
+    <td>{% if t.tem_processo %}sim{% elif t.tem_processo is none %}—{% else %}não{% endif %}</td>
+    <td class="mono">{{ t.intimacao_pedida_em|data_br }}</td></tr>{% endfor %}
+  {% if not testemunhas %}<tr><td colspan="5" class="sub">nenhuma arrolada</td></tr>{% endif %}
+  </table>
+</details>
+
+{% if fragilidades %}
+<details class="cartao"><summary><b>Fragilidades desta reclamada</b> · {{ fragilidades|length }}</summary>
+  <p class="sub">A tese se repete por empregador: mesma CCT, mesmo controle de ponto, mesmos
+    holerites. É o banco de teses do escritório, por reclamada.</p>
+  <table><tr><th>achado</th><th>eixo</th><th>força</th><th>situação</th></tr>
+  {% for f in fragilidades %}<tr><td>{{ f.achado }}
+      {% if f.como_explorar %}<br><span class="sub">{{ f.como_explorar }}</span>{% endif %}</td>
+    <td class="sub">{{ f.eixo or '—' }}</td><td class="sub">{{ f.forca|rotulo or '—' }}</td>
+    <td>{{ f.situacao|rotulo or '—' }}</td></tr>{% endfor %}
+  </table></details>
+{% endif %}
+
+<details class="cartao">
+  <summary><b>Trabalho, peças e documentos</b></summary>
+  <table><tr><th>tarefa</th><th>quem</th><th>prazo</th><th></th></tr>
+  {% for t in tarefas %}<tr><td>{{ t.titulo }}<br><span class="sub">{{ t.detalhe or '' }}</span></td>
+    <td>{{ t.responsavel or t.grupo or 'sem dono' }}</td>
+    <td class="mono {{ 'atrasado' if t.prazo and t.prazo < hoje_iso }}">{{ t.prazo|data_br }}</td>
+    <td><form method="post" action="/tarefa/{{ t.id }}/status">
+      <input type="hidden" name="voltar" value="/processos/{{ p.id }}">
+      <button name="status" value="CONCLUIDA" class="leve">concluir</button></form></td></tr>{% endfor %}
+  {% if not tarefas %}<tr><td colspan="4" class="sub">nenhuma tarefa aberta</td></tr>{% endif %}
+  </table>
+  {% if peticoes %}<table style="margin-top:10px"><tr><th>peça</th><th>status</th><th>protocolada</th></tr>
+    {% for pe in peticoes %}<tr><td>{{ pe.tipo|rotulo }} — {{ pe.titulo or 'sem título' }}</td>
+      <td>{{ pe.status|rotulo }}</td><td class="mono">{{ pe.protocolada_em|data_br }}</td></tr>{% endfor %}
+  </table>{% endif %}
+  {% if documentos %}<table style="margin-top:10px"><tr><th>arquivo</th><th>tipo</th><th>fonte</th></tr>
+    {% for d in documentos %}<tr><td>{{ d.nome_arquivo }}</td><td class="sub">{{ d.tipo|rotulo or '—' }}</td>
+      <td class="sub">{{ d.fonte|rotulo }}</td></tr>{% endfor %}
+  </table>{% endif %}
+</details>
+
+<div class="cartao">
+  <h2>Anotações</h2>
+  <form method="post" action="/processos/{{ p.id }}/anotacao" class="linha-acoes">
+    <input type="text" name="texto" placeholder="o que aconteceu neste processo" style="flex:1">
+    <button type="submit">anotar</button>
+  </form>
+  {% for a in anotacoes %}<p>{{ a.texto }}<br><span class="sub">{{ a.em[:16] }} ·
+    {{ a.autor or a.origem|lower }}{% if a.campo_origem %} · veio do campo {{ a.campo_origem }}{% endif %}</span></p>{% endfor %}
+  {% if not anotacoes %}<p class="sub">nada anotado ainda</p>{% endif %}
+</div>
+
+{% if alias or conferencias %}
+<details class="cartao"><summary><b>O que as duas fontes diziam diferente</b></summary>
+  <p class="sub">Nome, vara, nascimento e telefone divergiam entre a PROCESSUAL e a CÓPIA em
+    centenas de casos. Escolheu-se um valor e guardou-se o outro — jogar fora seria perder o
+    que talvez esteja certo.</p>
+  <table><tr><th>campo</th><th>o outro valor</th><th>origem</th></tr>
+  {% for a in alias %}<tr><td>{{ a.campo }}</td><td>{{ a.valor }}</td>
+    <td class="sub">{{ a.origem }}</td></tr>{% endfor %}</table>
+  {% if conferencias %}<table style="margin-top:10px">
+    <tr><th>campo</th><th>um lado</th><th>o outro</th><th>escolhido</th></tr>
+    {% for cf in conferencias %}<tr><td>{{ cf.campo or cf.tipo|rotulo }}</td>
+      <td>{{ cf.valor_a or '—' }} <span class="sub">{{ cf.origem_a or '' }}</span></td>
+      <td>{{ cf.valor_b or '—' }} <span class="sub">{{ cf.origem_b or '' }}</span></td>
+      <td>{{ cf.escolhido or 'ninguém escolheu ainda' }}</td></tr>{% endfor %}
+  </table>
+  <p class="sub"><a href="/conferencias?entidade=processos">resolver em Conferências</a></p>{% endif %}
+</details>
+{% endif %}
+
+{{ historico_etapas(historico) }}
+{% endblock %}

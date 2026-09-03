@@ -1,0 +1,25 @@
+# Dependências do portal trabalhista, fixadas — a máquina nova sobe igual.
+# É o subconjunto do requirements.txt do Prev que este portal realmente usa.
+#
+#     python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
+
+# a tela
+starlette==1.6.0
+uvicorn==0.52.4
+jinja2==3.1.6
+itsdangerous==2.2.0          # assina o cookie de sessão
+python-multipart==0.0.32     # formulário com upload
+
+# o banco
+psycopg[binary]==3.3.5
+psycopg-pool==3.3.1          # o poço de conexões; sem ele cada tela autentica
+
+# transitivas fixadas junto, para a instalação ser reprodutível
+anyio==4.15.0
+h11==0.16.0
+click==8.5.0
+MarkupSafe==3.0.3
+
+# --- ainda NÃO usados pelo portal, e por isso fora daqui de propósito:
+# cryptography   → cofre.py (o trabalhista não guarda senha de terceiro)
+# requests       → agenda_google.py (a agenda entra em outra rodada)

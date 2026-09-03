@@ -1,0 +1,47 @@
+{% extends "base.html" %}{% from "macros.html" import sinal, info %}{% set pg='clientes' %}
+{% block titulo %}Clientes{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Funil do cliente</h1></div>
+{# O contador conta DENTRO do recorte: com filtro, é o filtro que aparece. #}
+<p class="sub">{{ total }} ficha(s) neste recorte{% if linhas|length < total %} ·
+  mostrando as {{ linhas|length }} primeiras{% endif %}</p>
+
+<form method="get" class="filtros">
+  <input type="text" name="q" value="{{ p.get('q','') }}" placeholder="nome ou CPF" autofocus>
+  <select name="responsavel"><option value="">quem cuida — qualquer</option>
+    {% for e in equipe_l %}<option value="{{ e.id }}" {{ 'selected' if p.get('responsavel')==e.id|string }}>{{ e.nome }}</option>{% endfor %}</select>
+  <select name="captador"><option value="">captador — qualquer</option>
+    {% for e in equipe_l %}<option value="{{ e.id }}" {{ 'selected' if p.get('captador')==e.id|string }}>{{ e.nome }}</option>{% endfor %}</select>
+  <select name="canal"><option value="">origem — qualquer</option>
+    {% for c in canais %}<option value="{{ c.canal }}" {{ 'selected' if p.get('canal')==c.canal }}>{{ c.canal|rotulo }} ({{ c.n }})</option>{% endfor %}</select>
+  <select name="setor"><option value="">setor da etapa — qualquer</option>
+    {% for s in setores %}<option value="{{ s.grupo }}" {{ 'selected' if p.get('setor')==s.grupo }}>{{ s.grupo|setor_etapa }}</option>{% endfor %}</select>
+  <label class="chip"><input type="checkbox" name="vivos" value="1" {{ 'checked' if p.get('vivos')=='1' }}> só em aberto</label>
+  <button type="submit">filtrar</button>
+  <a href="/clientes" class="chip">limpar</a>
+</form>
+
+<div class="filtros">
+  <a href="/clientes{{ qs(request, status=None) }}" class="chip {{ 'on' if not p.get('status') }}">todas as etapas</a>
+  {% for e in etapas %}<a href="/clientes{{ qs(request, status=e.codigo) }}"
+    class="chip {{ 'on' if p.get('status')==e.codigo }} {{ 'fim' if e.tipo=='FINAL' }}"
+    title="{{ e.grupo|setor_etapa }}">{{ e.nome }} · {{ por_etapa.get(e.codigo, 0) }}</a>{% endfor %}
+</div>
+
+<div class="cartao"><table>
+<tr><th>nome</th><th>etapa</th><th>setor</th><th>reclamada</th><th>quem cuida</th>
+    <th>captador</th><th>origem</th><th class="num">pend.</th><th class="num">proc.</th><th></th></tr>
+{% for c in linhas %}<tr>
+  <td><a href="/clientes/{{ c.id }}">{{ c.nome }}</a></td>
+  <td><span class="marca-etapa">{{ c.etapa_nome }}</span></td>
+  <td class="sub">{{ c.grupo|setor_etapa }}</td>
+  <td>{{ c.empresa or '—' }}</td>
+  <td>{{ c.responsavel or '—' }}</td>
+  <td class="sub">{{ c.captador or '—' }}</td>
+  <td class="sub">{{ c.canal|rotulo or '—' }}</td>
+  <td class="num">{{ c.pendencias or '' }}</td>
+  <td class="num">{{ c.processos or '' }}</td>
+  <td>{{ sinal(sinais.get(c.id)) }}</td></tr>{% endfor %}
+{% if not linhas %}<tr><td colspan="10" class="sub">nada neste recorte</td></tr>{% endif %}
+</table></div>
+{% endblock %}

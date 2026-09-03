@@ -1,0 +1,60 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='audiencias' %}
+{% block titulo %}Audiências{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Pauta de audiências</h1></div>
+<p class="sub">{{ total }} audiência(s) neste recorte ·
+  {{ sem_preparacao }} nos próximos 7 dias sem nenhum item do checklist
+  {{ info('Confirmar testemunha leva tempo: ela comparece sem intimação (CLT art. 825) e, se
+           falhar, é preciso pedir a intimação com antecedência. Por isso a janela é de 7 dias.') }}</p>
+
+<form method="get" class="filtros">
+  <select name="janela">
+    {% for d in ['7','15','30','60','90'] %}<option value="{{ d }}" {{ 'selected' if (p.get('janela') or '30')==d }}>próximos {{ d }} dias</option>{% endfor %}
+    <option value="todas" {{ 'selected' if p.get('janela')=='todas' }}>qualquer data</option>
+  </select>
+  <select name="tipo"><option value="">tipo — qualquer</option>
+    {% for t in tipos %}<option value="{{ t.tipo }}" {{ 'selected' if p.get('tipo')==t.tipo }}>{{ t.tipo|rotulo }} ({{ t.n }})</option>{% endfor %}</select>
+  <select name="responsavel"><option value="">responsável — qualquer</option>
+    {% for e in equipe_l %}<option value="{{ e.id }}" {{ 'selected' if p.get('responsavel')==e.id|string }}>{{ e.nome }}</option>{% endfor %}</select>
+  <button type="submit">filtrar</button><a href="/audiencias" class="chip">limpar</a>
+</form>
+<div class="filtros">
+  <a href="/audiencias{{ qs(request, situacao='abertas') }}" class="chip {{ 'on' if (p.get('situacao') or 'abertas')=='abertas' }}">as que ainda vão acontecer</a>
+  {% for s in situacoes %}<a href="/audiencias{{ qs(request, situacao=s.codigo) }}"
+    class="chip {{ 'on' if p.get('situacao')==s.codigo }}">{{ s.nome }} · {{ s.registros }}</a>{% endfor %}
+  <a href="/audiencias{{ qs(request, situacao='todas') }}" class="chip {{ 'on' if p.get('situacao')=='todas' }}">todas</a>
+</div>
+
+<div class="colunas">
+  <div class="cartao">
+    <h2>A semana, dia a dia</h2>
+    {% for dia, itens in semana[:10] %}
+    <p><b>{{ dia|data_br }}</b> · {{ itens|length }}</p>
+    <table>{% for a in itens %}<tr>
+      <td class="mono">{{ a.data_hora[11:16] }}</td>
+      <td><a href="/audiencias/{{ a.id }}">{{ a.cliente }}</a></td>
+      <td class="sub">{{ a.tipo|rotulo or '—' }} · {{ a.modalidade|rotulo or '—' }}</td>
+      <td class="sub">{{ a.vara or '' }}</td>
+      <td class="{{ 'porque' if a.feitos == 0 }}">{{ a.feitos }}/4</td></tr>{% endfor %}</table>
+    {% endfor %}
+    {% if not semana %}<p class="sub">nada neste recorte</p>{% endif %}
+  </div>
+
+  <div class="cartao">
+    <h2>Lista</h2>
+    <table><tr><th>quando</th><th>dias</th><th>reclamante</th><th>reclamada</th><th>tipo</th>
+      <th>situação</th><th>preparação</th><th>responsável</th></tr>
+    {% for a in linhas %}<tr>
+      <td class="mono"><a href="/audiencias/{{ a.id }}">{{ a.data_hora[:16] if a.data_hora else 'sem data' }}</a></td>
+      <td class="num {{ 'atrasado' if a.dias is not none and a.dias <= 1 }}">{{ a.dias if a.dias is not none else '—' }}</td>
+      <td>{% if a.cliente_id %}<a href="/clientes/{{ a.cliente_id }}">{{ a.cliente }}</a>{% endif %}</td>
+      <td class="sub">{{ a.empresa or '—' }}</td>
+      <td class="sub">{{ a.tipo|rotulo or '—' }}</td>
+      <td><span class="marca-etapa">{{ a.situacao_nome or a.situacao|rotulo }}</span></td>
+      <td class="{{ 'porque' if a.feitos == 0 }}">{{ a.feitos }}/4</td>
+      <td class="sub">{{ a.responsavel or '—' }}</td></tr>{% endfor %}
+    {% if not linhas %}<tr><td colspan="8" class="sub">nada neste recorte</td></tr>{% endif %}
+    </table>
+  </div>
+</div>
+{% endblock %}

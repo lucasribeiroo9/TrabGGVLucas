@@ -1,0 +1,52 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='tarefas' %}
+{% block titulo %}Tarefas{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Tarefas</h1></div>
+<p class="sub">{{ total }} tarefa(s) neste recorte · {{ sem_dono }} sem dono no escritório
+  {{ info('Etapa sem dono é etapa parada. A distribuição automática entrega a tarefa a quem
+           está mais leve no mesmo setor — urgente pesa 3, atrasada 2, o resto 1 — com teto de
+           15 por pessoa. Quem passa disso não recebe mais, e a tarefa fica na fila.') }}</p>
+
+<div class="filtros">
+  <a href="/tarefas{{ qs(request, quem='minhas') }}" class="chip {{ 'on' if quem=='minhas' }}">minhas</a>
+  <a href="/tarefas{{ qs(request, quem='sem_dono') }}" class="chip {{ 'on' if quem=='sem_dono' }}">sem dono · {{ sem_dono }}</a>
+  <a href="/tarefas{{ qs(request, quem='todas') }}" class="chip {{ 'on' if quem=='todas' }}">do escritório</a>
+  {% for g in grupos %}<a href="/tarefas{{ qs(request, quem='todas', grupo=g.grupo) }}"
+    class="chip {{ 'on' if p.get('grupo')==g.grupo }}">{{ g.grupo|setor_etapa }} · {{ g.n }}</a>{% endfor %}
+</div>
+<div class="filtros">
+  {% for t in tipos %}<a href="/tarefas{{ qs(request, tipo=t.tipo) }}"
+    class="chip {{ 'on' if p.get('tipo')==t.tipo }}">{{ t.tipo|rotulo }} · {{ t.n }}</a>{% endfor %}
+  <a href="/tarefas{{ qs(request, tipo=None, situacao='CONCLUIDA') }}" class="chip {{ 'on' if p.get('situacao')=='CONCLUIDA' }}">concluídas</a>
+</div>
+
+<div class="cartao"><table>
+<tr><th>tarefa</th><th>tipo</th><th>quem</th><th>setor</th><th>caso</th><th>prazo</th>
+    <th>prioridade</th><th>situação</th><th></th></tr>
+{% for t in linhas %}<tr class="{{ 'atrasado' if t.atrasada }}">
+  <td><b>{{ t.titulo }}</b>{% if t.detalhe %}<br><span class="sub">{{ t.detalhe }}</span>{% endif %}
+      {% if t.texto_original %}<br><span class="sub" title="o recado como estava na origem">“{{ t.texto_original }}”</span>{% endif %}</td>
+  <td class="sub">{{ t.tipo|rotulo }}</td>
+  <td>{{ t.responsavel or '—' }}</td>
+  <td class="sub">{{ t.grupo|setor_etapa or '—' }}</td>
+  <td class="sub">{% if t.proc_id %}<a href="/processos/{{ t.processo_id }}" class="mono">{{ t.numero_cnj|cnj }}</a><br>{% endif %}
+      {% if t.cliente_id %}<a href="/clientes/{{ t.cliente_id }}">{{ t.cliente }}</a>{% endif %}</td>
+  <td class="mono">{{ t.prazo|data_br }}</td>
+  <td>{{ t.prioridade|lower }}</td>
+  <td><span class="marca-etapa">{{ t.status|rotulo }}</span></td>
+  <td><form method="post" action="/tarefa/{{ t.id }}/status" class="linha-acoes">
+      <input type="hidden" name="voltar" value="/tarefas{{ qs(request) }}">
+      {% if not t.responsavel_id %}<button name="status" value="assumir" class="leve">assumir</button>{% endif %}
+      {% if t.status != 'CONCLUIDA' %}<button name="status" value="CONCLUIDA">concluir</button>{% endif %}
+      </form></td></tr>{% endfor %}
+{% if not linhas %}<tr><td colspan="9" class="sub">nada neste recorte</td></tr>{% endif %}
+</table></div>
+
+<details class="cartao"><summary><b>Carga da equipe</b></summary>
+  <p class="sub">É a MESMA conta que a distribuição automática usa. Se fossem duas contas, esta
+    tela explicaria uma distribuição que não aconteceu.</p>
+  <table><tr><th>pessoa</th><th>setor</th><th class="num">abertas</th><th class="num">peso</th></tr>
+  {% for c in carga %}<tr><td>{{ c.nome }}</td><td class="sub">{{ c.setor or '—' }}</td>
+    <td class="num">{{ c.abertas }}</td><td class="num"><b>{{ c.peso }}</b></td></tr>{% endfor %}
+  </table></details>
+{% endblock %}

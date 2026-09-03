@@ -1,0 +1,85 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='painel' %}
+{% block titulo %}Painel{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Painel do escritório</h1></div>
+<p class="sub">Tudo aqui sai de consulta, dentro do recorte que o título diz. O que não dá para
+  apurar não vira indicador.</p>
+
+<div class="colunas">
+  <div class="cartao">
+    <h2>Onde estão os casos</h2>
+    <table><tr><th>fluxo</th><th>etapa</th><th>setor</th><th class="num">registros</th></tr>
+    {% for f in funil %}<tr class="{{ 'fim' if f.tipo=='FINAL' }}">
+      <td class="sub">{{ f.fluxo|lower }}</td><td>{{ f.etapa }}</td>
+      <td class="sub">{{ f.grupo|setor_etapa or '—' }}</td>
+      <td class="num"><b>{{ f.registros }}</b></td></tr>{% endfor %}
+    </table>
+  </div>
+
+  <div class="cartao">
+    <h2>O que está parado além do SLA</h2>
+    <p class="sub">SLA aqui não é meta de desempenho: é o tempo além do qual vale perguntar
+      "e este?". Nas fases judiciais o ritmo é do juízo.</p>
+    <table><tr><th>onde</th><th>etapa</th><th>setor</th><th class="num">SLA</th>
+      <th class="num">quantos</th><th class="num">pior</th></tr>
+    {% for e in estagnados %}<tr><td class="sub">{{ e.entidade }}</td><td>{{ e.nome }}</td>
+      <td class="sub">{{ e.grupo|setor_etapa or '—' }}</td>
+      <td class="num">{{ e.sla_dias }}d</td><td class="num"><b>{{ e.n }}</b></td>
+      <td class="num">{{ e.pior }}d</td></tr>{% endfor %}
+    {% if not estagnados %}<tr><td colspan="6" class="sub">nada parado além do SLA</td></tr>{% endif %}
+    </table>
+    {% for f in farol %}<p class="sub">Pré-processual no farol {{ f.farol|lower }}: <b>{{ f.n }}</b></p>{% endfor %}
+  </div>
+</div>
+
+<div class="colunas">
+  <div class="cartao">
+    <h2>Onde o escritório ganha e perde</h2>
+    <table><tr><th>resultado final</th><th class="num">processos</th></tr>
+    {% for r in resultados %}<tr><td>{{ r.resultado_final|rotulo }}</td>
+      <td class="num"><b>{{ r.n }}</b></td></tr>{% endfor %}
+    {% if not resultados %}<tr><td colspan="2" class="sub">nenhum resultado registrado ainda —
+      e sem isso não se mede onde o escritório perde</td></tr>{% endif %}
+    </table>
+    <p class="sub">Prazos perdidos: <b>{{ prazos_perdidos }}</b>
+      {{ info('É a estatística que ninguém pode sujar. Por isso SEM_OBJETO existe: prazo que
+               morreu por acordo ou desistência não é prazo perdido.') }}<br>
+      Audiências não realizadas por ausência do reclamante: <b>{{ ausencias }}</b>
+      {{ info('CLT art. 844: a ausência arquiva e pode custar custas. É perda evitável, e
+               precisa ser medida por captador e por entrevistador.') }}</p>
+  </div>
+
+  <div class="cartao">
+    <h2>Dinheiro</h2>
+    <p class="sub">Sucumbência é do escritório, paga pela reclamada (art. 791-A CLT);
+      honorário contratual é do escritório, descontado do cliente. Somam separado.</p>
+    <table><tr><th>o que entrou</th><th class="num">linhas</th><th class="num">total</th></tr>
+    {% for d in dinheiro %}<tr><td>{{ d.base|rotulo }}</td><td class="num">{{ d.n }}</td>
+      <td class="num mono">{{ d.total|centavos }}</td></tr>{% endfor %}
+    {% if not dinheiro %}<tr><td colspan="3" class="sub">nada registrado</td></tr>{% endif %}
+    </table>
+    <table style="margin-top:10px"><tr><th>acordos</th><th class="num">quantos</th>
+      <th class="num">total</th></tr>
+    {% for a in acordos %}<tr><td>{{ a.situacao|rotulo }}</td><td class="num">{{ a.n }}</td>
+      <td class="num mono">{{ a.total|centavos }}</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+
+<div class="colunas">
+  <div class="cartao">
+    <h2>Onde tramita</h2>
+    <table><tr><th>TRT</th><th class="num">processos</th></tr>
+    {% for t in por_trt %}<tr><td>TRT {{ t.trt }}</td><td class="num">{{ t.n }}</td></tr>{% endfor %}
+    </table>
+  </div>
+  <div class="cartao">
+    <h2>Incidentes de representação</h2>
+    <p class="sub">O cliente que trocou de advogado. É o número que mede o roubo de cliente.</p>
+    <table><tr><th>situação</th><th class="num">quantos</th></tr>
+    {% for i in incidentes %}<tr><td>{{ i.situacao|rotulo }}</td><td class="num">{{ i.n }}</td></tr>{% endfor %}
+    {% if not incidentes %}<tr><td colspan="2" class="sub">nenhum</td></tr>{% endif %}
+    </table>
+  </div>
+</div>
+{% endblock %}

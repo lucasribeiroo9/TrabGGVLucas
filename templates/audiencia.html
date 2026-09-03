@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "macros.html" import governanca, historico_etapas, lista_pendencias, info %}
+{% set pg='audiencias' %}{% block titulo %}Audiência{% endblock %}{% block corpo %}
+
+<div class="cal-topo">
+  <h1>Audiência {{ a.tipo|rotulo }} · {{ a.data_hora[:16] if a.data_hora else 'sem data' }}</h1>
+  <span class="marca-etapa">{{ a.situacao_nome or a.situacao|rotulo }}</span>
+</div>
+
+<div class="cartao">
+  <div class="grade-ficha">
+    <div><span class="rot">reclamante</span><a href="/clientes/{{ a.cliente_id }}">{{ a.cliente }}</a>
+      {% if a.telefone %}<span class="sub">{{ a.telefone }}</span>{% endif %}</div>
+    <div><span class="rot">reclamada</span>{{ a.empresa or '—' }}</div>
+    <div><span class="rot">processo</span>
+      <a href="/processos/{{ a.proc_id }}" class="mono">{{ a.numero_cnj|cnj }}</a></div>
+    <div><span class="rot">TRT / vara</span>{{ a.trt or '?' }} / {{ a.vara or '?' }}</div>
+    <div><span class="rot">modalidade</span>{{ a.modalidade|rotulo or '—' }}</div>
+    <div><span class="rot">responsável</span>{{ a.responsavel or '—' }}</div>
+    {% if a.resultado %}<div><span class="rot">resultado</span>{{ a.resultado|rotulo }}</div>{% endif %}
+    {% if a.motivo %}<div><span class="rot">motivo</span>{{ a.motivo|rotulo }}
+      {{ info('Ausência do reclamante arquiva (CLT art. 844) e pode custar custas. Fica no
+               motivo, não escondida num status: é perda evitável e precisa ser medida por
+               captador e entrevistador.') }}</div>{% endif %}
+  </div>
+  {% if anterior %}<p class="sub">Redesignada da audiência de {{ anterior.data_hora[:16] }}
+    ({{ anterior.resultado|rotulo or 'sem resultado registrado' }}).</p>{% endif %}
+  {% for s in seguinte %}<p class="sub">Redesignada para
+    <a href="/audiencias/{{ s.id }}">{{ s.data_hora[:16] if s.data_hora else 'sem data' }}</a>
+    ({{ s.situacao|rotulo }}).</p>{% endfor %}
+</div>
+
+<div class="cartao destaque">
+  <h2>Preparação</h2>
+  <p class="sub">O primeiro item marcado leva a audiência de designada para em preparação — e
+    essa mudança passa pelo mesmo mapa de etapas que tudo o mais. Clicar de novo desmarca.</p>
+  <table>
+    <tr><td>Cliente orientado</td>
+      <td class="mono">{{ a.cliente_orientado_em|data_br }}</td>
+      <td><form method="post" action="/audiencias/{{ a.id }}/checklist">
+        <button name="item" value="cliente_orientado_em" class="leve">
+          {{ 'desmarcar' if a.cliente_orientado_em else 'marcar' }}</button></form></td></tr>
+    <tr><td>Testemunhas confirmadas
+        {{ info('A testemunha comparece independentemente de intimação (CLT art. 825). Se ela
+                 avisar que não vai, é preciso pedir a intimação com antecedência — por isso
+                 este item é o que puxa a preparação para uma semana antes.') }}</td>
+      <td class="mono">{{ a.testemunhas_confirmadas_em|data_br }}</td>
+      <td><form method="post" action="/audiencias/{{ a.id }}/checklist">
+        <button name="item" value="testemunhas_confirmadas_em" class="leve">
+          {{ 'desmarcar' if a.testemunhas_confirmadas_em else 'marcar' }}</button></form></td></tr>
+    <tr><td>Ad video feito
+        {{ info('[CONFIRMAR] O que é exatamente o ad video no escritório: a origem tem o campo
+                 (STATUS ADVIDEO / DATA ADVIDEO) e ele está vazio em todos os registros.') }}</td>
+      <td class="mono">{{ a.advideo_em|data_br }}</td>
+      <td><form method="post" action="/audiencias/{{ a.id }}/checklist">
+        <button name="item" value="advideo_em" class="leve">
+          {{ 'desmarcar' if a.advideo_em else 'marcar' }}</button></form></td></tr>
+    <tr><td>Documentos conferidos</td>
+      <td class="mono">{{ a.documentos_conferidos_em|data_br }}</td>
+      <td><form method="post" action="/audiencias/{{ a.id }}/checklist">
+        <button name="item" value="documentos_conferidos_em" class="leve">
+          {{ 'desmarcar' if a.documentos_conferidos_em else 'marcar' }}</button></form></td></tr>
+  </table>
+</div>
+
+{{ governanca('audiencias', a.id, trilha, a.situacao, transicoes, percorridas, etapa_agora, 99,
+              '/audiencias/' ~ a.id) }}
+
+<div class="cartao">
+  <h2>Testemunhas do processo</h2>
+  <table><tr><th>nome</th><th>vínculo</th><th>situação</th><th>confirmada</th>
+    <th>tem processo?</th><th>intimação pedida</th></tr>
+  {% for t in testemunhas %}<tr><td><a href="/testemunhas/{{ t.id }}">{{ t.nome }}</a></td>
+    <td class="sub">{{ t.vinculo|rotulo or '—' }}</td>
+    <td><span class="marca-etapa">{{ t.situacao|rotulo }}</span></td>
+    <td class="mono">{{ t.confirmada_em|data_br }}</td>
+    <td>{% if t.tem_processo %}sim{% elif t.tem_processo is none %}—{% else %}não{% endif %}</td>
+    <td class="mono">{{ t.intimacao_pedida_em|data_br }}</td></tr>{% endfor %}
+  {% if not testemunhas %}<tr><td colspan="6" class="sub">nenhuma arrolada neste processo</td></tr>{% endif %}
+  </table>
+</div>
+
+{% if pendencias %}
+<div class="cartao"><h2>Pendências do processo</h2>{{ lista_pendencias(pendencias) }}</div>
+{% endif %}
+
+{{ historico_etapas(historico) }}
+{% endblock %}

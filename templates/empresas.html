@@ -1,0 +1,32 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='empresas' %}
+{% block titulo %}Reclamadas{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Reclamadas</h1></div>
+<p class="sub">{{ total }} empresa(s) neste recorte. Os atributos de risco — situação,
+  histórico de pagamento, bens — moram AQUI, não no processo
+  {{ info('Na origem estavam nos dois lugares e divergiam. O processo só lê; quem escreve é a
+           ficha da empresa. Onde os dois lados discordaram, a migração abriu conferência.') }}</p>
+
+<form method="get" class="filtros">
+  <input type="text" name="q" value="{{ p.get('q','') }}" placeholder="nome ou CNPJ">
+  <select name="situacao"><option value="">situação — qualquer</option>
+    {% for s in ['ATIVA','INATIVA','EM_RECUPERACAO'] %}<option value="{{ s }}" {{ 'selected' if p.get('situacao')==s }}>{{ s|rotulo }}</option>{% endfor %}</select>
+  <select name="pagamento"><option value="">pagamento — qualquer</option>
+    {% for s in ['BOA','RUIM','PESSIMA'] %}<option value="{{ s }}" {{ 'selected' if p.get('pagamento')==s }}>{{ s|lower }}</option>{% endfor %}</select>
+  <button type="submit">filtrar</button><a href="/empresas" class="chip">limpar</a>
+</form>
+
+<div class="cartao"><table>
+<tr><th>nome</th><th>CNPJ</th><th>situação</th><th>pagamento</th><th>bens</th>
+    <th class="num">processos</th><th class="num">em aberto</th><th class="num">teses</th></tr>
+{% for e in linhas %}<tr>
+  <td><a href="/empresas/{{ e.id }}">{{ e.nome }}</a></td>
+  <td class="mono sub">{{ e.cnpj or '—' }}</td>
+  <td>{{ e.situacao|rotulo or '—' }}</td>
+  <td>{{ e.hist_pagamento|lower or '—' }}</td>
+  <td>{% if e.bens_identificados %}sim{% elif e.bens_identificados is none %}—{% else %}não{% endif %}</td>
+  <td class="num">{{ e.processos }}</td><td class="num">{{ e.vivos }}</td>
+  <td class="num">{{ e.teses or '' }}</td></tr>{% endfor %}
+{% if not linhas %}<tr><td colspan="8" class="sub">nada neste recorte</td></tr>{% endif %}
+</table></div>
+{% endblock %}

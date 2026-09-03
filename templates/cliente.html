@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% from "macros.html" import governanca, historico_etapas, lista_pendencias, sinal, info %}
+{% set pg='clientes' %}{% block titulo %}{{ c.nome }}{% endblock %}{% block corpo %}
+
+<div class="cal-topo">
+  <h1>{{ c.nome }}</h1>
+  <span class="marca-etapa" style="margin-left:8px">{{ c.etapa_nome or c.status|rotulo }}</span>
+  {% if c.etapa_grupo %}<span class="sub">setor: {{ c.etapa_grupo|setor_etapa }}</span>{% endif %}
+</div>
+
+{# A identidade em largura total, no topo. Uma coluna só — nada de painéis lado
+   a lado: a ficha muda com a fase, e o que importa é o que está aberto. #}
+<div class="cartao">
+  <div class="grade-ficha">
+    <div><span class="rot">CPF</span>{{ c.cpf or '—' }}
+      {% if c.cpf and not c.cpf_valido %}<span class="porque">dígito não confere</span>{% endif %}</div>
+    <div><span class="rot">telefone</span>{{ c.telefone or '—' }}</div>
+    <div><span class="rot">nascimento</span>{{ c.data_nascimento|data_br }}</div>
+    <div><span class="rot">função</span>{{ c.funcao or '—' }}</div>
+    <div><span class="rot">reclamada</span>
+      {% if c.emp_id %}<a href="/empresas/{{ c.emp_id }}">{{ c.empresa }}</a>{% else %}—{% endif %}</div>
+    <div><span class="rot">saída</span>{{ c.rescisao_modalidade|rotulo or '—' }}
+      {% if c.rescisao_original and c.rescisao_original != c.rescisao_modalidade %}
+        <span class="sub" title="o texto como estava na origem">“{{ c.rescisao_original }}”</span>{% endif %}</div>
+    <div><span class="rot">demissão</span>{{ c.data_demissao|data_br }}
+      {% if c.contrato_vivo %}<span class="sub">contrato ainda vivo — não há prazo correndo</span>{% endif %}</div>
+    <div><span class="rot">contrato assinado</span>{{ c.data_assinatura_contrato|data_br }}</div>
+    <div><span class="rot">origem</span>{{ c.canal|rotulo or '—' }}{% if c.campanha %} · {{ c.campanha }}{% endif %}</div>
+    <div><span class="rot">captador</span>{{ c.captador or '—' }}</div>
+  </div>
+
+  {% if prescreve and prescreve.prescreve_em %}
+  <p class="{{ 'aviso erro' if prescreve.farol=='VERMELHO' else 'aviso' }}" style="margin-top:10px">
+    Prescrição bienal em <b>{{ prescreve.prescreve_em|data_br }}</b>
+    (CF art. 7º XXIX; CLT art. 11).
+    {% if prescreve.dias_desde_assinatura is not none %}
+      Assinou há {{ prescreve.dias_desde_assinatura }} dia(s).{% endif %}
+    {% if c.dispensa_prescricao_motivo %}<br>Dispensa registrada: “{{ c.dispensa_prescricao_motivo }}”
+    {% else %}<br>Sem dispensa registrada — o banco recusa abrir processo depois do prazo.{% endif %}
+  </p>
+  {% endif %}
+
+  <form method="post" action="/clientes/{{ c.id }}/responsavel" class="linha-acoes" style="margin-top:10px">
+    <label>quem cuida
+      <select name="pessoa_id" onchange="this.form.submit()">
+        <option value="">ninguém ainda</option>
+        <option value="eu">eu mesmo</option>
+        {% for e in equipe_l %}<option value="{{ e.id }}" {{ 'selected' if c.responsavel_id==e.id }}>
+          {{ e.nome }}{% if e.setor %} · {{ e.setor }}{% endif %}</option>{% endfor %}
+      </select></label>
+    <span class="sub">é o dono do atendimento — vale desde o lead, quando ainda não há
+      processo nem tarefa onde pendurar dono. Não é o captador.</span>
+  </form>
+</div>
+
+{{ governanca('clientes', c.id, trilha, c.status, transicoes, percorridas, etapa_agora, 9,
+              '/clientes/' ~ c.id) }}
+
+<details class="cartao" {{ 'open' if pendencias }}>
+  <summary><b>Pendências</b> · {{ pendencias|length }} aberta(s)
+    {% if docs_faltando %}<span class="porque">documento obrigatório faltando:
+      {{ docs_faltando|join(', ') }}</span>{% endif %}</summary>
+  <p class="sub">É uma tabela só, com tipo (resposta 7 do Lucas): documento, entrevista,
+    petição, reunião pré-audiência, réplica. <b>Só a de DOCUMENTO trava a etapa</b>; as outras
+    viram tarefa com dono, que é o que já são na prática. Pedido sem recebimento confirmado
+    continua pendente.</p>
+  {{ lista_pendencias(pendencias) }}
+
+  <form method="post" action="/clientes/{{ c.id }}/pendencia" class="linha-acoes" style="margin-top:12px">
+    <select name="tipo">
+      {% for t in ['DOCUMENTO','ENTREVISTA','PETICAO','REUNIAO_PRE_AUDIENCIA','REPLICA','OUTRO'] %}
+      <option value="{{ t }}">{{ t|rotulo }}</option>{% endfor %}</select>
+    <select name="documento_tipo"><option value="">— qual documento (só para DOCUMENTO)</option>
+      {% for d in ['CNH_RG','CTPS','TRCT','DOCS_MEDICOS','PROVAS','FGTS','HOLERITES','PIS','OUTRO'] %}
+      <option value="{{ d }}">{{ d|rotulo }}</option>{% endfor %}</select>
+    <input type="text" name="descricao" placeholder="o que falta" size="24">
+    <select name="responsavel_id"><option value="">sem dono</option>
+      {% for e in equipe_l %}<option value="{{ e.id }}">{{ e.nome }}</option>{% endfor %}</select>
+    <input type="date" name="prazo" title="prazo">
+    <label class="chip"><input type="checkbox" name="obrigatorio" value="1" checked> obrigatória</label>
+    <label class="chip"><input type="checkbox" name="ja_pedida" value="1"> já pedi ao cliente</label>
+    <button type="submit">abrir pendência</button>
+  </form>
+
+  {% if resolvidas %}
+  <details style="margin-top:10px"><summary class="sub">o que já foi resolvido ({{ resolvidas|length }})</summary>
+    <table><tr><th>tipo</th><th>o que era</th><th>recebida</th><th>dispensa</th></tr>
+      {% for r in resolvidas %}<tr><td>{{ r.tipo|rotulo }}</td>
+        <td>{{ r.documento_tipo|rotulo or r.descricao or '—' }}</td>
+        <td class="mono">{{ r.recebido_em|data_br }}</td>
+        <td class="sub">{{ r.dispensado_motivo or '' }}</td></tr>{% endfor %}
+    </table></details>
+  {% endif %}
+</details>
+
+<details class="cartao" {{ 'open' if c.status in ('ENTREVISTA','PETICAO_PENDENTE') }}>
+  <summary><b>Entrevista</b>{% if c.entrevista_em %} · {{ c.entrevista_em|data_br }}{% else %}
+    · ainda não registrada{% endif %}</summary>
+  <div class="grade-ficha">
+    <div><span class="rot">quando</span>{{ c.entrevista_em|data_br }}</div>
+    <div><span class="rot">entrevistador</span>{{ c.entrevistador or '—' }}</div>
+    <div><span class="rot">contatos até aqui</span>{{ c.contatos_entrevista }}</div>
+    <div><span class="rot">perícia</span>
+      {% if c.pericia_medica %}médica{% endif %}{% if c.pericia_tecnica %} técnica{% endif %}
+      {% if not c.pericia_medica and not c.pericia_tecnica %}—{% endif %}</div>
+  </div>
+  <p>{{ c.entrevista_resumo or '—' }}</p>
+  {% if eventos %}<table><tr><th>agenda</th><th>quando</th><th>situação</th><th>onde</th></tr>
+    {% for e in eventos %}<tr><td>{{ e.tipo|rotulo }}</td><td class="mono">{{ e.data_hora[:16] if e.data_hora else '—' }}</td>
+      <td>{{ e.situacao|rotulo }}</td><td class="sub">{{ e.local or '' }}</td></tr>{% endfor %}</table>{% endif %}
+</details>
+
+<details class="cartao" {{ 'open' if processos }}>
+  <summary><b>Processos desta pessoa</b> · {{ processos|length }}</summary>
+  <table><tr><th>número</th><th>fase</th><th>TRT/vara</th><th class="num">valor da causa</th>
+    <th>resultado</th><th></th></tr>
+  {% for p in processos %}<tr>
+    <td class="mono"><a href="/processos/{{ p.id }}">{{ p.numero_cnj|cnj }}</a></td>
+    <td><span class="marca-etapa">{{ p.fase_nome or p.fase|rotulo }}</span></td>
+    <td class="sub">{{ p.trt or '?' }} / {{ p.vara or '?' }}</td>
+    <td class="num mono">{{ p.valor_causa_centavos|centavos }}</td>
+    <td class="sub">{{ p.resultado_final|rotulo or '—' }}</td>
+    <td>{{ sinal(sinais.get(p.id)) }}</td></tr>{% endfor %}
+  {% if not processos %}<tr><td colspan="6" class="sub">o processo nasce quando a inicial é
+    distribuída — antes disso o caso vive no funil acima</td></tr>{% endif %}
+  </table>
+</details>
+
+<details class="cartao">
+  <summary><b>Testemunhas</b> · {{ testemunhas|length }}</summary>
+  <table><tr><th>nome</th><th>vínculo</th><th>situação</th><th>tem processo?</th><th>último contato</th></tr>
+  {% for t in testemunhas %}<tr>
+    <td><a href="/testemunhas/{{ t.id }}">{{ t.nome }}</a></td>
+    <td class="sub">{{ t.vinculo|rotulo or '—' }}</td>
+    <td><span class="marca-etapa">{{ t.situacao|rotulo }}</span></td>
+    <td>{% if t.tem_processo %}sim <span class="sub">(Súmula 357 TST: não a torna suspeita,
+        mas a reclamada vai contraditar)</span>{% elif t.tem_processo is none %}—{% else %}não{% endif %}</td>
+    <td class="mono">{{ t.ultimo_contato_em|data_br }}</td></tr>{% endfor %}
+  {% if not testemunhas %}<tr><td colspan="5" class="sub">nenhuma arrolada</td></tr>{% endif %}
+  </table>
+</details>
+
+<details class="cartao">
+  <summary><b>Documentos e peças</b> · {{ documentos|length }} documento(s),
+    {{ peticoes|length }} peça(s)</summary>
+  <p class="sub">Só o metadado: nome, tipo e onde está. Cópia de arquivo não entra no banco.</p>
+  <table><tr><th>arquivo</th><th>tipo</th><th>fonte</th><th>quando</th></tr>
+  {% for d in documentos %}<tr>
+    <td>{% if d.drive_url %}<a href="{{ d.drive_url }}" target="_blank" rel="noopener">{{ d.nome_arquivo }}</a>
+        {% else %}{{ d.nome_arquivo }}{% endif %}</td>
+    <td class="sub">{{ d.tipo|rotulo or '—' }}</td><td class="sub">{{ d.fonte|rotulo }}</td>
+    <td class="mono sub">{{ d.criado_em[:10] }}</td></tr>{% endfor %}
+  {% if not documentos %}<tr><td colspan="4" class="sub">nenhum documento catalogado</td></tr>{% endif %}
+  </table>
+  {% if peticoes %}<table style="margin-top:10px">
+    <tr><th>peça</th><th>título</th><th>versão</th><th>status</th><th>minuta anexada?</th></tr>
+    {% for pe in peticoes %}<tr><td>{{ pe.tipo|rotulo }}</td><td>{{ pe.titulo or '—' }}</td>
+      <td class="num">{{ pe.versao }}</td><td><span class="marca-etapa">{{ pe.status|rotulo }}</span></td>
+      <td>{{ 'sim' if pe.arquivo_id else 'não — e é isso que trava a aprovação' }}</td></tr>{% endfor %}
+  </table>{% endif %}
+</details>
+
+<details class="cartao">
+  <summary><b>Trabalho e contatos</b> · {{ tarefas|length }} tarefa(s) aberta(s)</summary>
+  <table><tr><th>tarefa</th><th>quem</th><th>prazo</th><th>prioridade</th><th></th></tr>
+  {% for t in tarefas %}<tr><td>{{ t.titulo }}<br><span class="sub">{{ t.detalhe or '' }}</span></td>
+    <td>{{ t.responsavel or t.grupo or 'sem dono' }}</td>
+    <td class="mono {{ 'atrasado' if t.prazo and t.prazo < hoje_iso }}">{{ t.prazo|data_br }}</td>
+    <td>{{ t.prioridade|lower }}</td>
+    <td><form method="post" action="/tarefa/{{ t.id }}/status">
+      <input type="hidden" name="voltar" value="/clientes/{{ c.id }}">
+      <button name="status" value="CONCLUIDA" class="leve">concluir</button></form></td></tr>{% endfor %}
+  {% if not tarefas %}<tr><td colspan="5" class="sub">nenhuma tarefa aberta</td></tr>{% endif %}
+  </table>
+  {% if contatos %}<table style="margin-top:10px"><tr><th>quando</th><th>canal</th><th>quem</th><th>resultado</th></tr>
+    {% for ct in contatos %}<tr><td class="mono">{{ ct.em|data_br }}</td><td>{{ ct.canal|rotulo }}</td>
+      <td>{{ ct.quem or '—' }}</td><td class="sub">{{ ct.resultado or ct.observacao or '' }}</td></tr>{% endfor %}
+  </table>{% endif %}
+</details>
+
+{% if anotacoes %}
+<details class="cartao"><summary><b>Anotações</b> · {{ anotacoes|length }}</summary>
+  {% for a in anotacoes %}<p>{{ a.texto }}<br><span class="sub">{{ a.em[:16] }} ·
+    {{ a.autor or a.origem|lower }}{% if a.campo_origem %} · veio do campo {{ a.campo_origem }}{% endif %}</span></p>{% endfor %}
+</details>
+{% endif %}
+
+{% if conferencias %}
+<div class="cartao destaque"><h2>Divergências desta ficha</h2>
+  <table><tr><th>campo</th><th>um lado</th><th>o outro</th><th>tipo</th></tr>
+    {% for cf in conferencias %}<tr><td>{{ cf.campo or '—' }}</td>
+      <td>{{ cf.valor_a or '—' }} <span class="sub">{{ cf.origem_a or '' }}</span></td>
+      <td>{{ cf.valor_b or '—' }} <span class="sub">{{ cf.origem_b or '' }}</span></td>
+      <td class="sub">{{ cf.tipo|rotulo }}</td></tr>{% endfor %}</table>
+  <p class="sub"><a href="/conferencias?entidade=clientes">resolver em Conferências</a></p>
+</div>
+{% endif %}
+
+{{ historico_etapas(historico) }}
+{% endblock %}

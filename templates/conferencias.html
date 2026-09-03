@@ -1,0 +1,64 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='conferencias' %}
+{% block titulo %}Conferências{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Conferências</h1></div>
+<p class="sub">{{ total }} linha(s) neste recorte. Onde a migração não soube escolher, ninguém
+  escolheu em silêncio: a divergência virou linha aqui, com o valor de <b>cada lado</b> e o
+  trecho de prova. Resolver é escolher um lado — ou anotar por que nenhum serve.
+  {% if faltantes %}<br>Há ainda {{ faltantes }} processo(s) na lista de faltantes do Datajud
+  esperando validação. [CONFIRMAR: a tela dessa lista entra na próxima rodada.]{% endif %}</p>
+
+<form method="get" class="filtros">
+  <select name="dono"><option value="">dono — qualquer</option>
+    <option value="sem" {{ 'selected' if p.get('dono')=='sem' }}>sem dono</option>
+    {% for e in equipe_l %}<option value="{{ e.id }}" {{ 'selected' if p.get('dono')==e.id|string }}>{{ e.nome }}</option>{% endfor %}</select>
+  <select name="entidade"><option value="">onde — qualquer</option>
+    {% for e in entidades %}<option value="{{ e.entidade }}" {{ 'selected' if p.get('entidade')==e.entidade }}>{{ e.entidade }} ({{ e.n }})</option>{% endfor %}</select>
+  <button type="submit">filtrar</button><a href="/conferencias" class="chip">limpar</a>
+</form>
+<div class="filtros">
+  <a href="/conferencias{{ qs(request, tipo=None) }}" class="chip {{ 'on' if not p.get('tipo') }}">todos os tipos</a>
+  {% for t in tipos %}<a href="/conferencias{{ qs(request, tipo=t.tipo) }}"
+    class="chip {{ 'on' if p.get('tipo')==t.tipo }}">{{ t.tipo|rotulo }} · {{ t.n }}</a>{% endfor %}
+</div>
+<div class="filtros">
+  <a href="/conferencias{{ qs(request, situacao='abertas') }}" class="chip {{ 'on' if (p.get('situacao') or 'abertas')=='abertas' }}">abertas e em análise</a>
+  {% for s in ['RESOLVIDA','IGNORADA'] %}<a href="/conferencias{{ qs(request, situacao=s) }}"
+    class="chip {{ 'on' if p.get('situacao')==s }}">{{ s|lower }}</a>{% endfor %}
+  <a href="/conferencias{{ qs(request, situacao='todas') }}" class="chip {{ 'on' if p.get('situacao')=='todas' }}">todas</a>
+</div>
+
+<div class="cartao"><table>
+<tr><th>tipo</th><th>onde</th><th>campo</th><th>um lado</th><th>o outro</th><th>prova</th>
+    <th>dono</th><th>resolver</th></tr>
+{% for c in linhas %}<tr>
+  <td><span class="marca-etapa">{{ c.tipo|rotulo }}</span></td>
+  <td class="sub">{{ c.entidade }}
+    {% if c.entidade_id %}<br><a href="/{{ c.entidade }}/{{ c.entidade_id }}">abrir o registro</a>
+    {% else %}<br><span class="sub">a linha nem entrou</span>{% endif %}</td>
+  <td>{{ c.campo or '—' }}</td>
+  <td><b>{{ c.valor_a or '—' }}</b><br><span class="sub">{{ c.origem_a or '' }}</span></td>
+  <td><b>{{ c.valor_b or '—' }}</b><br><span class="sub">{{ c.origem_b or '' }}</span></td>
+  <td class="sub">{{ c.prova or '—' }}
+    {% if c.escolhido %}<br>a migração gravou: <b>{{ c.escolhido }}</b>{% endif %}
+    {% if c.anotacao %}<br>anotação: {{ c.anotacao }}{% endif %}</td>
+  <td><form method="post" action="/conferencia/{{ c.id }}/resolver">
+      <input type="hidden" name="acao" value="dono">
+      <select name="pessoa_id" onchange="this.form.submit()">
+        <option value="">sem dono</option><option value="eu">eu</option>
+        {% for e in equipe_l %}<option value="{{ e.id }}" {{ 'selected' if c.dono_id==e.id }}>{{ e.nome }}</option>{% endfor %}
+      </select></form>
+    <span class="marca-etapa">{{ c.situacao|lower }}</span></td>
+  <td>{% if c.situacao in ('ABERTA','EM_ANALISE') %}
+    <form method="post" action="/conferencia/{{ c.id }}/resolver" class="linha-acoes">
+      <input type="text" name="anotacao" placeholder="anotação / motivo" size="16">
+      <button name="acao" value="a" title="{{ c.valor_a }}">vale o 1º</button>
+      <button name="acao" value="b" title="{{ c.valor_b }}">vale o 2º</button>
+      <button name="acao" value="anotar" class="leve">anotar</button>
+      <button name="acao" value="ignorar" class="leve">ignorar</button>
+    </form>{% else %}
+    <span class="sub">{{ c.resolvido_em[:10] if c.resolvido_em else '' }}</span>{% endif %}</td>
+  </tr>{% endfor %}
+{% if not linhas %}<tr><td colspan="8" class="sub">nada neste recorte</td></tr>{% endif %}
+</table></div>
+{% endblock %}

@@ -1,0 +1,219 @@
+{# ------------------------------------------------------------------- info
+
+   O ⓘ que explica uma ação sem ocupar a tela. Some quando não há o que dizer,
+   em vez de virar ícone morto que ensina a pessoa a ignorar ícone.
+
+   Abre no passar do mouse E no foco pelo teclado.
+
+   O texto vem de DADO sempre que existir (`fluxo_etapas.texto_operador`,
+   `fluxo_transicoes.texto_bloqueio`), nunca escrito no template: explicação
+   que mora em dois lugares diverge no primeiro dia em que alguém muda uma.
+#}
+{% macro info(texto, titulo='') -%}
+{%- if texto %}<span class="info" tabindex="0" role="button"
+  aria-label="o que é isto">ⓘ<span class="balao">{% if titulo %}<b>{{ titulo }}</b><br>{% endif %}{{ texto }}</span></span>{% endif -%}
+{%- endmacro %}
+
+
+{# O sinal de urgência de um processo, compacto o bastante para caber na lista.
+   Vem de alertas.por_processo(); quem não tem nada pegando fogo não imprime nada. #}
+{% macro sinal(a) -%}
+{%- if a %}<span class="sinal {{ a.nivel }}" title="{{ a.detalhe or a.resumo }}{% if a.n > 1 %} · e mais {{ a.n - 1 }} coisa(s) neste processo{% endif %}">{{ a.resumo }}{% if a.quando %} · {{ a.quando|data_br }}{% endif %}{% if a.n > 1 %} +{{ a.n - 1 }}{% endif %}</span>{% endif -%}
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------- funil_etapas
+
+   A trilha de etapas de QUALQUER entidade governada — cliente, processo,
+   audiência, prazo, incidente. Uma implementação só: se a regra de "o que dá
+   para clicar" existir em cinco lugares, um dia elas discordam e a tela passa
+   a mentir.
+
+   Estado de cada etapa, e por quê:
+     ATUAL       onde está agora
+     PERCORRIDA  já passou por aqui — clicável, leva ao histórico
+     POSSÍVEL    dá para ir daqui — clicável, abre a janela
+     TRAVADA     existe no mapa mas o pré-requisito não está cumprido; o título
+                 mostra `fluxo_transicoes.texto_bloqueio`, escrito para operador
+     FUTURA      não se alcança daqui
+#}
+{% macro funil_etapas(trilha, atual, transicoes, percorridas=[], abrir='abrirJanela', ate=99) -%}
+<div class="trilha">
+  {%- for e in trilha if e.ordem <= ate %}
+  {%- set eh_atual = (e.codigo == atual) %}
+  {%- set destino = (transicoes | selectattr('para','equalto',e.codigo) | list | first) %}
+  {%- set ja_passou = (e.codigo in percorridas) and not eh_atual %}
+  {%- set liberado = destino and (destino.liberado or (destino.pode_papel and destino.so_falta_motivo)) %}
+  <button type="button"
+          class="passo {{ 'atual' if eh_atual }} {{ 'percorrida' if ja_passou }}
+                 {{ 'possivel' if liberado and not eh_atual }}
+                 {{ 'travada' if destino and not liberado and not eh_atual }}"
+          {% if eh_atual %}disabled
+          {% elif liberado %}onclick="{{ abrir }}('{{ e.codigo }}')"
+          {% elif ja_passou %}onclick="document.getElementById('hist')?.scrollIntoView({behavior:'smooth'})"
+          {% else %}disabled{% endif %}
+          title="{% if eh_atual %}onde está agora{% elif destino and not liberado %}{{ destino.texto_bloqueio or destino.impedimento or 'falta cumprir um pré-requisito' }}{% elif destino %}{{ destino.acao }}{% elif ja_passou %}já passou por aqui — ver no histórico{% else %}não dá para ir daqui para lá{% endif %}">
+    <span class="ordem">{{ e.ordem }}</span>
+    <span>{{ e.nome }}</span>
+    {%- if destino and not liberado %}<span class="cadeado" aria-hidden="true">🔒</span>{% endif %}
+  </button>
+  {#- a explicação fica FORA do botão: dentro, o clique no ⓘ dispararia a
+      mudança de etapa, que é justamente o que quem está em dúvida não quer -#}
+  {{ info(e.texto_operador, e.nome) }}
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+
+{# O que fazer na etapa atual, em linguagem de operador. Vem de
+   `fluxo_etapas.texto_operador` — nunca escrito no template. #}
+{% macro passo_atual(etapa) -%}
+{%- if etapa and etapa.texto_operador %}
+<details class="passo-atual" open>
+  <summary><b>O que fazer agora</b> — {{ etapa.nome }}</summary>
+  <p>{{ etapa.texto_operador }}</p>
+  {%- if etapa.sla_dias %}<p class="sub">Prazo interno desta etapa: {{ etapa.sla_dias }} dias
+    corridos. Não é meta de desempenho: é o tempo além do qual vale perguntar
+    "e este?".</p>{% endif %}
+</details>
+{%- endif %}
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------- janela_transicao
+
+   A janela (<dialog>) por onde a etapa muda, para as cinco máquinas. O
+   formulário posta em /mover/<entidade>/<id>, que é a porta única.
+
+   Os CAMPOS de cada saída vêm de `fluxo.py` (`t.campos`) — motivo, número
+   CNJ, protocolo, resultado. Eles aparecem só quando a saída escolhida os
+   exige, porque um formulário com sete campos, dos quais dois valem, é um
+   formulário que a pessoa preenche errado.
+#}
+{% macro janela_transicao(entidade, rid, transicoes, titulo='Para onde este caso vai', voltar='') -%}
+<dialog id="janela" class="janela">
+  <form method="post" action="/mover/{{ entidade }}/{{ rid }}">
+    <input type="hidden" name="voltar" value="{{ voltar }}">
+    <h2 id="tituloJanela">{{ titulo }}</h2>
+    <div id="opcoes"></div>
+    <div id="camposJanela"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button type="button" class="leve" onclick="document.getElementById('janela').close()">cancelar</button>
+      <button type="submit" name="para" id="confirma" value="">confirmar</button>
+    </div>
+  </form>
+</dialog>
+<script>
+const SAIDAS = {{ transicoes | tojson }};
+function podeIr(t) { return t.liberado || (t.pode_papel && t.so_falta_motivo); }
+
+function camposDe(t) {
+  if (!podeIr(t) || !(t.campos || []).length) return '';
+  return t.campos.map(c => {
+    const req = ' required';
+    if (c.tipo === 'select') {
+      return `<label class="campo-janela">${c.rotulo}
+        <select name="${c.nome}"${req}><option value="">escolha</option>` +
+        (c.opcoes || []).map(o =>
+          `<option value="${o}">${o.replace(/_/g, ' ').toLowerCase()}</option>`).join('') +
+        `</select></label>`;
+    }
+    return `<label class="campo-janela">${c.rotulo}
+      <input type="${c.tipo}" name="${c.nome}"${req} style="width:100%"></label>`;
+  }).join('');
+}
+
+function abrirJanela(codigo) {
+  const j = document.getElementById('janela');
+  const caixa = document.getElementById('opcoes');
+  const campos = document.getElementById('camposJanela');
+  const titulo = document.getElementById('tituloJanela');
+  const botao = document.getElementById('confirma');
+  const um = SAIDAS.find(t => t.para === codigo);
+  const lista = um ? [um] : SAIDAS;
+  titulo.textContent = um ? um.acao : '{{ titulo }}';
+  caixa.innerHTML = lista.map(t => `
+    <label class="saida ${podeIr(t) ? '' : 'bloqueada'}">
+      <input type="radio" name="escolha" value="${t.para}" ${podeIr(t) ? '' : 'disabled'}
+             ${lista.length === 1 && podeIr(t) ? 'checked' : ''} onchange="escolheu(this)">
+      <span><b>${t.acao}</b> <span class="sub">→ fica ${t.nome_destino.toLowerCase()}</span>
+      ${t.papel_exigido ? `<br><span class="sub">só ${t.papel_exigido.toLowerCase()} pode fazer isto</span>` : ''}
+      ${!t.pode_papel ? '<br><span class="porque">seu perfil não pode fazer isto</span>' : ''}
+      ${t.gate_ok || t.so_falta_motivo ? '' : `<br><span class="porque">${t.texto_bloqueio || t.impedimento}</span>`}
+      ${(t.caminhos || []).map(c => `<br><span class="onde">Onde se resolve: ${c.link ? `<a href="${c.link}">${c.texto}</a>` : c.texto}${c.extra ? ' <span class="fraco">' + c.extra + '</span>' : ''}</span>`).join('')}
+      </span></label>`).join('');
+  const marcado = caixa.querySelector('input:checked');
+  botao.value = marcado ? marcado.value : '';
+  campos.innerHTML = marcado ? camposDe(SAIDAS.find(t => t.para === marcado.value)) : '';
+  j.showModal();
+}
+
+function escolheu(radio) {
+  document.getElementById('confirma').value = radio.value;
+  document.getElementById('camposJanela').innerHTML =
+    camposDe(SAIDAS.find(t => t.para === radio.value));
+}
+</script>
+{%- endmacro %}
+
+
+{# O bloco de governança inteiro: trilha, o que fazer agora, a janela e o
+   convite para ver todas as saídas. Cinco fichas usam este mesmo. #}
+{% macro governanca(entidade, rid, trilha, atual, transicoes, percorridas, etapa, ate=99, voltar='') -%}
+<div class="cartao bloco-funil">
+  {{ funil_etapas(trilha, atual, transicoes, percorridas, 'abrirJanela', ate) }}
+  {{ passo_atual(etapa) }}
+  <p class="sub" style="margin:8px 0 0">Clique na etapa para onde este caso vai. As que não
+    dão para alcançar daqui ficam apagadas — o mapa é o mesmo que o banco cobra, e a recusa
+    vem do gatilho, não da tela.
+    <a href="#" onclick="abrirJanela('');return false">ver todas as saídas ({{ transicoes|length }})</a></p>
+</div>
+{{ janela_transicao(entidade, rid, transicoes, 'Para onde este caso vai', voltar) }}
+{%- endmacro %}
+
+
+{# O histórico de etapas — quem mudou, quando e por quê. É o que o Airtable
+   nunca teve. #}
+{% macro historico_etapas(linhas) -%}
+<details class="cartao" id="hist">
+  <summary><b>Histórico de etapas</b> · {{ linhas|length }}</summary>
+  <table>
+    <tr><th>quando</th><th>de</th><th>para</th><th>quem</th><th>motivo</th><th>origem</th></tr>
+    {% for h in linhas %}<tr>
+      <td class="mono">{{ h.em[:16] }}</td>
+      <td>{{ h.de|rotulo or '—' }}</td>
+      <td><b>{{ h.para|rotulo }}</b></td>
+      <td>{{ h.quem or '—' }}</td>
+      <td>{{ h.motivo or '—' }}</td>
+      <td class="sub">{{ h.origem|lower }}</td></tr>{% endfor %}
+    {% if not linhas %}<tr><td colspan="6" class="sub">nada registrado ainda</td></tr>{% endif %}
+  </table>
+</details>
+{%- endmacro %}
+
+
+{# Uma pendência, com "espera resposta há N dias". Serve ao cliente e ao
+   processo — a tabela é a mesma (resposta 7 do Lucas). #}
+{% macro lista_pendencias(linhas, mostrar_form=true) -%}
+<table>
+  <tr><th>tipo</th><th>o que falta</th><th>quem resolve</th><th>pedida</th><th>prazo</th><th></th></tr>
+  {% for p in linhas %}<tr>
+    <td><span class="marca-etapa">{{ p.tipo|rotulo }}</span></td>
+    <td>{{ p.documento_tipo|rotulo or p.descricao or '—' }}
+        {% if not p.obrigatorio %}<span class="sub">(não obrigatória)</span>{% endif %}</td>
+    <td>{{ p.responsavel or p.grupo or '—' }}</td>
+    <td>{% if p.solicitado_em %}{{ p.solicitado_em|data_br }}
+          {% if p.espera_dias is not none %}<span class="sub">espera resposta há
+            {{ p.espera_dias }} dia(s)</span>{% endif %}
+        {% else %}<span class="sub">ainda não pedida</span>{% endif %}</td>
+    <td class="mono">{{ p.prazo|data_br }}</td>
+    <td>{% if mostrar_form %}
+      <form method="post" action="/pendencia/{{ p.id }}/resolver" class="linha-acoes">
+        {% if not p.solicitado_em %}<button name="acao" value="solicitada" class="leve">pedi</button>{% endif %}
+        <button name="acao" value="recebida">recebida</button>
+        <input type="text" name="motivo" placeholder="motivo da dispensa" size="18">
+        <button name="acao" value="dispensada" class="leve">dispensar</button>
+      </form>{% endif %}</td></tr>{% endfor %}
+  {% if not linhas %}<tr><td colspan="6" class="sub">nenhuma pendência aberta</td></tr>{% endif %}
+</table>
+{%- endmacro %}

@@ -1,0 +1,81 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='empresas' %}
+{% block titulo %}{{ e.nome }}{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>{{ e.nome }}</h1>
+  {% if e.situacao %}<span class="marca-etapa">{{ e.situacao|rotulo }}</span>{% endif %}</div>
+
+<div class="cartao">
+  <div class="grade-ficha">
+    <div><span class="rot">CNPJ</span><span class="mono">{{ e.cnpj or '—' }}</span></div>
+    <div><span class="rot">razão social</span>{{ e.razao_social or '—' }}</div>
+    <div><span class="rot">segmento</span>{{ e.segmento or '—' }}</div>
+    <div><span class="rot">histórico de pagamento</span>{{ e.hist_pagamento|lower or '—' }}
+      {{ info('É o risco de recebimento: quem paga mal exige garantia do juízo e pesquisa
+               patrimonial antes de negociar acordo.') }}</div>
+    <div><span class="rot">bens identificados</span>
+      {% if e.bens_identificados %}sim{% elif e.bens_identificados is none %}—{% else %}não{% endif %}</div>
+    <div><span class="rot">recebido nos processos</span>
+      <span class="mono">{{ recebido|centavos }}</span></div>
+  </div>
+  {% if e.observacao %}<p>{{ e.observacao }}</p>{% endif %}
+</div>
+
+<div class="cartao">
+  <h2>Onde estão os processos desta reclamada</h2>
+  <table><tr><th>fase</th><th class="num">quantos</th></tr>
+  {% for f in por_fase %}<tr><td>{{ f.nome }}</td><td class="num"><b>{{ f.n }}</b></td></tr>{% endfor %}
+  {% if not por_fase %}<tr><td class="sub">nenhum processo</td></tr>{% endif %}
+  </table>
+</div>
+
+<details class="cartao" open>
+  <summary><b>Fragilidades</b> · {{ fragilidades|length }}</summary>
+  <p class="sub">É o banco de teses do escritório, por reclamada: no trabalhista a tese repete
+    por empregador — mesma CCT, mesmo controle de ponto, mesmos holerites.</p>
+  <table><tr><th>achado</th><th>eixo</th><th>força</th><th>situação</th><th>como explorar</th>
+    <th class="num">valor estimado</th></tr>
+  {% for f in fragilidades %}<tr><td><b>{{ f.achado }}</b>
+      {% if f.descricao %}<br><span class="sub">{{ f.descricao }}</span>{% endif %}
+      {% if f.fundamento %}<br><span class="sub">{{ f.fundamento }}</span>{% endif %}</td>
+    <td class="sub">{{ f.eixo or '—' }}</td>
+    <td>{{ f.forca|rotulo or '—' }}</td>
+    <td><span class="marca-etapa">{{ f.situacao|rotulo or 'inédita' }}</span></td>
+    <td class="sub">{{ f.como_explorar or '—' }}
+      {% if f.doc_a_requerer %}<br>requerer: {{ f.doc_a_requerer }}{% endif %}</td>
+    <td class="num mono">{{ f.valor_estimado_centavos|centavos }}</td></tr>{% endfor %}
+  {% if not fragilidades %}<tr><td colspan="6" class="sub">nenhuma tese registrada para esta
+    reclamada</td></tr>{% endif %}
+  </table>
+</details>
+
+<details class="cartao">
+  <summary><b>Processos</b> · {{ processos|length }}</summary>
+  <table><tr><th>número</th><th>reclamante</th><th>fase</th><th>TRT/vara</th>
+    <th class="num">valor da causa</th><th>resultado</th></tr>
+  {% for p in processos %}<tr>
+    <td class="mono"><a href="/processos/{{ p.id }}">{{ p.numero_cnj|cnj }}</a></td>
+    <td><a href="/clientes/{{ p.cliente_id }}">{{ p.cliente }}</a></td>
+    <td><span class="marca-etapa">{{ p.fase_nome or p.fase|rotulo }}</span></td>
+    <td class="sub">{{ p.trt or '?' }} / {{ p.vara or '?' }}</td>
+    <td class="num mono">{{ p.valor_causa_centavos|centavos }}</td>
+    <td class="sub">{{ p.resultado_final|rotulo or '—' }}</td></tr>{% endfor %}
+  </table>
+</details>
+
+<details class="cartao">
+  <summary><b>Testemunhas ligadas a esta reclamada</b> · {{ testemunhas|length }}</summary>
+  <table><tr><th>nome</th><th>vínculo</th><th>situação</th><th>tem processo?</th></tr>
+  {% for t in testemunhas %}<tr><td><a href="/testemunhas/{{ t.id }}">{{ t.nome }}</a></td>
+    <td class="sub">{{ t.vinculo|rotulo or '—' }}</td>
+    <td><span class="marca-etapa">{{ t.situacao|rotulo }}</span></td>
+    <td>{% if t.tem_processo %}sim{% elif t.tem_processo is none %}—{% else %}não{% endif %}</td></tr>{% endfor %}
+  {% if not testemunhas %}<tr><td colspan="4" class="sub">nenhuma</td></tr>{% endif %}
+  </table>
+</details>
+
+{% if anotacoes %}
+<details class="cartao"><summary><b>Anotações</b></summary>
+  {% for a in anotacoes %}<p>{{ a.texto }}<br><span class="sub">{{ a.em[:16] }} ·
+    {{ a.autor or a.origem|lower }}</span></p>{% endfor %}</details>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,71 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='testemunhas' %}
+{% block titulo %}{{ t.nome }}{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>{{ t.nome }}</h1>
+  <span class="marca-etapa">{{ t.situacao|rotulo }}</span></div>
+
+<div class="cartao">
+  <div class="grade-ficha">
+    <div><span class="rot">reclamada</span>{{ t.empresa or '—' }}</div>
+    <div><span class="rot">vínculo</span>{{ t.vinculo|rotulo or '—' }}</div>
+    <div><span class="rot">horário de trabalho</span>{{ t.horario_trabalho or '—' }}</div>
+    <div><span class="rot">admissão</span>{{ t.admissao_em|data_br }}</div>
+    <div><span class="rot">ainda trabalha lá</span>
+      {% if t.ainda_trabalha %}sim{% elif t.ainda_trabalha is none %}—{% else %}não{% endif %}</div>
+    <div><span class="rot">demissão</span>{{ t.demissao_em|data_br }}</div>
+    <div><span class="rot">tem processo próprio</span>
+      {% if t.tem_processo %}sim{% elif t.tem_processo is none %}—{% else %}não{% endif %}
+      {{ info('Súmula 357 do TST: ter ação contra a mesma reclamada não a torna suspeita. Mas
+               a reclamada vai contraditar, e é melhor chegar sabendo.') }}</div>
+    <div><span class="rot">confirmada em</span>{{ t.confirmada_em|data_br }}</div>
+    <div><span class="rot">cobranças</span>{{ t.cobrancas }}</div>
+    <div><span class="rot">último contato</span>{{ t.ultimo_contato_em|data_br }}</div>
+    <div><span class="rot">canal de cadastro</span>{{ t.origem|lower or '—' }}</div>
+    <div><span class="rot">captador</span>{{ t.captador or '—' }}</div>
+  </div>
+  {% if t.observacao %}<p>{{ t.observacao }}</p>{% endif %}
+</div>
+
+<div class="cartao">
+  <h2>Em que casos ela serve</h2>
+  <table><tr><th>processo</th><th>reclamante</th><th>audiência</th><th>intimação pedida</th>
+    <th>observação</th></tr>
+  {% for v in vinculos %}<tr>
+    <td class="mono">{% if v.proc_id %}<a href="/processos/{{ v.proc_id }}">{{ v.numero_cnj|cnj }}</a>
+        {% else %}<span class="sub">ainda no pré-processual</span>{% endif %}</td>
+    <td>{% if v.cliente_id %}<a href="/clientes/{{ v.cliente_id }}">{{ v.cliente }}</a>{% else %}—{% endif %}</td>
+    <td class="mono">{{ v.audiencia_em[:16] if v.audiencia_em else '—' }}</td>
+    <td class="mono">{{ v.intimacao_pedida_em|data_br }}
+      {{ info('A testemunha comparece independentemente de intimação (CLT art. 825). Se avisar
+               que não vai, pede-se a intimação — e isso leva tempo.') }}</td>
+    <td class="sub">{{ v.observacao or '' }}</td></tr>{% endfor %}
+  {% if not vinculos %}<tr><td colspan="5" class="sub">sem vínculo com caso nenhum</td></tr>{% endif %}
+  </table>
+</div>
+
+{% if contatos %}
+<details class="cartao" open><summary><b>Contatos</b> · {{ contatos|length }}</summary>
+  <table><tr><th>quando</th><th>canal</th><th>quem</th><th>resultado</th></tr>
+  {% for c in contatos %}<tr><td class="mono">{{ c.em|data_br }}</td><td>{{ c.canal|rotulo }}</td>
+    <td>{{ c.quem or '—' }}</td><td class="sub">{{ c.resultado or c.observacao or '' }}</td></tr>{% endfor %}
+  </table></details>
+{% endif %}
+
+{% if auditoria %}
+<details class="cartao"><summary><b>Auditoria do formulário interno</b> · {{ auditoria|length }}</summary>
+  <p class="sub">Log append-only de outro sistema (n8n). Migrou como estava — não se reescreve
+    auditoria.</p>
+  <table><tr><th>quando</th><th>quem</th><th>ação</th><th>campos</th><th>resultado</th></tr>
+  {% for a in auditoria %}<tr><td class="mono">{{ a.em or '—' }}</td>
+    <td>{{ a.ator_nome or '—' }} <span class="sub">{{ a.setor or '' }}</span></td>
+    <td>{{ a.acao or '—' }}</td><td class="sub">{{ a.campos_alterados or '' }}</td>
+    <td class="sub">{{ a.resultado or '' }}</td></tr>{% endfor %}
+  </table></details>
+{% endif %}
+
+{% if anotacoes %}
+<details class="cartao"><summary><b>Anotações</b></summary>
+  {% for a in anotacoes %}<p>{{ a.texto }}<br><span class="sub">{{ a.em[:16] }} ·
+    {{ a.autor or a.origem|lower }}</span></p>{% endfor %}</details>
+{% endif %}
+{% endblock %}

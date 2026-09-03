@@ -1,0 +1,70 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='fluxos' %}
+{% block titulo %}Governança{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Governança</h1></div>
+<p class="sub">O mapa como o BANCO o guarda. Nada aqui é escrito no template: etapas,
+  transições, gates e textos saem de <code>fluxos</code>, <code>fluxo_etapas</code> e
+  <code>fluxo_transicoes</code>. Mudar o mapa é mexer em linha de tabela, não em código — e é
+  por isso que a governança pode mudar depois sem obrigar a migrar de novo.</p>
+
+{% for f in fluxos %}
+<div class="cartao">
+  <h2>{{ f.nome }} <span class="sub">{{ f.entidade }}.{{ f.coluna }}</span></h2>
+  <table>
+    <tr><th class="num">#</th><th>etapa</th><th>tipo</th><th>setor</th><th class="num">SLA</th>
+      <th class="num">registros</th><th>o que fazer aqui</th></tr>
+    {% for e in etapas if e.fluxo == f.codigo %}<tr class="{{ 'fim' if e.tipo=='FINAL' }}">
+      <td class="num">{{ e.ordem }}</td>
+      <td><b>{{ e.nome }}</b><br><span class="mono sub">{{ e.codigo }}</span></td>
+      <td class="sub">{{ e.tipo|lower }}</td>
+      <td class="sub">{{ e.grupo|setor_etapa or '—' }}</td>
+      <td class="num">{{ e.sla_dias or '—' }}</td>
+      <td class="num"><b>{{ contagem.get(e.codigo, 0) }}</b></td>
+      <td class="sub">{{ e.texto_operador or '—' }}</td></tr>{% endfor %}
+  </table>
+  <details style="margin-top:10px">
+    <summary class="sub">as transições permitidas
+      ({{ transicoes|selectattr('fluxo','equalto',f.codigo)|list|length }})</summary>
+    <table><tr><th>de</th><th>para</th><th>ação</th><th>papel</th><th>exige</th>
+      <th>o que a pessoa lê quando está travado</th></tr>
+    {% for t in transicoes if t.fluxo == f.codigo %}<tr>
+      <td>{{ t.de_nome or t.de }}</td><td>{{ t.para_nome or t.para }}</td>
+      <td><b>{{ t.acao }}</b></td><td class="sub">{{ t.papel|lower or 'qualquer' }}</td>
+      <td class="mono sub">{{ t.exige or '—' }}</td>
+      <td class="sub">{{ t.texto_bloqueio or '—' }}</td></tr>{% endfor %}
+    </table>
+  </details>
+</div>
+{% endfor %}
+
+<div class="cartao">
+  <h2>Tipos de prazo</h2>
+  <table><tr><th>tipo</th><th class="num">dias úteis</th><th>fundamento</th><th>fase</th>
+    <th>observação</th></tr>
+  {% for t in prazo_tipos %}<tr><td><b>{{ t.nome }}</b><br><span class="mono sub">{{ t.codigo }}</span></td>
+    <td class="num">{{ t.dias if t.dias else 'o juízo fixa (' ~ t.dias_padrao ~ ' por padrão)' }}</td>
+    <td class="sub">{{ t.fundamento }}</td><td class="sub">{{ t.fase_usual|rotulo or '—' }}</td>
+    <td class="sub">{{ t.observacao or '' }}</td></tr>{% endfor %}
+  </table>
+</div>
+
+<div class="cartao">
+  <h2>Automações</h2>
+  <p class="sub">Todas param no mesmo lugar: abrem tarefa com dono e prazo. Nenhuma protocola
+    nem move etapa — quem decide é gente. E toda execução deixa rastro, porque o modo de falha
+    de automação é o silêncio: rodada que falhou tem de ser distinguível de dia sem nada a
+    fazer.</p>
+  <table><tr><th>regra</th><th>ligada</th><th>o que faz</th></tr>
+  {% for a in automacoes %}<tr><td><b>{{ a.nome }}</b><br><span class="mono sub">{{ a.codigo }}</span></td>
+    <td>{{ 'sim' if a.ativa else 'não' }}</td><td class="sub">{{ a.descricao }}</td></tr>{% endfor %}
+  {% if not automacoes %}<tr><td colspan="3" class="sub">nenhuma registrada ainda — rode
+    <code>python3 automacao.py</code> uma vez para elas nascerem</td></tr>{% endif %}
+  </table>
+  {% if execucoes %}<table style="margin-top:10px">
+    <tr><th>regra</th><th>resultado</th><th class="num">quantas</th><th>última</th></tr>
+    {% for e in execucoes %}<tr><td class="mono">{{ e.automacao }}</td>
+      <td>{{ e.resultado }}</td><td class="num">{{ e.n }}</td>
+      <td class="mono sub">{{ e.ultima[:16] if e.ultima else '' }}</td></tr>{% endfor %}
+  </table>{% endif %}
+</div>
+{% endblock %}

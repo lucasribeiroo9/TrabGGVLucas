@@ -1,0 +1,167 @@
+{#  Vem do base.html do Prev. Tema e tamanho da letra saem do SERVIDOR, na tag
+    <html>: assim a tela nasce certa. Aplicar por JavaScript faria a página
+    piscar do escuro para o claro a cada carregamento.
+
+    `default(...)` não é descuido: tela renderizada fora de `pagina()` não
+    recebe `tema` nem `fonte_pct`, e o efeito não seria letra no tamanho errado
+    — seria 500 justo na tela que diz "não pode". #}
+<!doctype html><html lang="pt-BR" data-tema="{{ tema|default('escuro', true) }}"
+  style="--fonte-pct:{{ fonte_pct|default(100, true) }}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block titulo %}GGV Trabalhista{% endblock %}</title>
+<link rel="stylesheet" href="/static/estilo.css?v={{ css_v() }}"></head>
+<body data-pg="{{ pg|default('') }}">
+{% if u %}
+<header><div class="barra">
+  <div class="marca">GGV <span>Trabalhista</span></div>
+  <nav>
+    {% if 'meu_dia' in telas %}<a href="/" class="{{ 'on' if pg=='inicio' }}">Início</a>{% endif %}
+
+    {% if 'clientes' in telas %}
+    <div class="grupo {{ 'on' if pg in ('clientes','processos') }}" tabindex="0">
+      <span>Casos ▾</span>
+      <div class="submenu">
+        <a href="/clientes" class="{{ 'on' if pg=='clientes' }}">Clientes (funil)</a>
+        {% if 'processos' in telas %}<a href="/processos" class="{{ 'on' if pg=='processos' }}">Processos</a>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if 'audiencias' in telas or 'prazos' in telas %}
+    <div class="grupo {{ 'on' if pg in ('audiencias','prazos') }}" tabindex="0">
+      <span>Agenda judicial ▾</span>
+      <div class="submenu">
+        {% if 'audiencias' in telas %}<a href="/audiencias" class="{{ 'on' if pg=='audiencias' }}">Audiências</a>{% endif %}
+        {% if 'prazos' in telas %}<a href="/prazos" class="{{ 'on' if pg=='prazos' }}">Prazos</a>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if 'empresas' in telas or 'testemunhas' in telas %}
+    <div class="grupo {{ 'on' if pg in ('empresas','testemunhas') }}" tabindex="0">
+      <span>Prova ▾</span>
+      <div class="submenu">
+        {% if 'empresas' in telas %}<a href="/empresas" class="{{ 'on' if pg=='empresas' }}">Reclamadas</a>{% endif %}
+        {% if 'testemunhas' in telas %}<a href="/testemunhas" class="{{ 'on' if pg=='testemunhas' }}">Testemunhas</a>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if 'tarefas' in telas or 'equipe' in telas or 'painel' in telas %}
+    <div class="grupo {{ 'on' if pg in ('tarefas','equipe','painel','fluxos','conferencias') }}" tabindex="0">
+      <span>Gestão ▾</span>
+      <div class="submenu">
+        {% if 'tarefas' in telas %}<a href="/tarefas" class="{{ 'on' if pg=='tarefas' }}">Tarefas</a>{% endif %}
+        {% if 'conferencias' in telas %}<a href="/conferencias" class="{{ 'on' if pg=='conferencias' }}">Conferências</a>{% endif %}
+        {% if 'equipe' in telas %}<a href="/equipe" class="{{ 'on' if pg=='equipe' }}">Equipe</a>{% endif %}
+        {% if 'fluxos' in telas %}<a href="/fluxos" class="{{ 'on' if pg=='fluxos' }}">Governança</a>{% endif %}
+        {% if 'painel' in telas %}<a href="/painel" class="{{ 'on' if pg=='painel' }}">Painel</a>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </nav>
+  <a href="/" class="marca-agora" id="conta-agora" hidden></a>
+  <div class="quem">
+    {{ u.nome }} · {{ u.papel|lower }}{% if u.setor %} · {{ u.setor }}{% endif %}<br>
+    <a href="/senha">trocar senha</a> · <a href="/sair">sair</a>
+  </div>
+</div></header>
+{% endif %}
+<main>
+{% if request.query_params.get('erro') %}<div class="aviso erro">{{ request.query_params.get('erro') }}</div>{% endif %}
+{% if request.query_params.get('ok') %}<div class="aviso ok">{{ request.query_params.get('ok') }}</div>{% endif %}
+{% block corpo %}{% endblock %}
+</main>
+<script>
+//  TODO POST feito por JavaScript leva o token de CSRF, sem que quem escreve o
+//  `fetch` precise lembrar. O contrário — pedir para cada chamada mandar o
+//  cabeçalho — funciona até alguém esquecer, e o sintoma é um 403 que só
+//  aparece na tela de outra pessoa. Só para o MESMO servidor: mandar o nosso
+//  token a outro site é entregar de graça o que a trava existe para proteger.
+(function () {
+  const meta = document.querySelector('meta[name="ggv-token"]');
+  if (!meta || !window.fetch) return;
+  const original = window.fetch;
+  window.fetch = function (entrada, opcoes) {
+    opcoes = opcoes || {};
+    const metodo = (opcoes.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(metodo)) {
+      let mesmo = true;
+      try {
+        const alvo = new URL(typeof entrada === 'string' ? entrada : entrada.url, location.href);
+        mesmo = alvo.origin === location.origin;
+      } catch (_) { mesmo = true; }
+      if (mesmo) {
+        const h = new Headers(opcoes.headers || {});
+        h.set('X-GGV-Token', meta.content);
+        opcoes = Object.assign({}, opcoes, { headers: h });
+      }
+    }
+    return original.call(this, entrada, opcoes);
+  };
+})();
+
+// O contador do que é para AGORA alcança a pessoa em qualquer tela.
+(function () {
+  const conta = document.getElementById('conta-agora');
+  if (!conta) return;
+  async function conferir() {
+    try {
+      const r = await fetch('/api/agora');
+      if (!r.ok) return;
+      const d = await r.json();
+      conta.textContent = d.n ? d.n + ' agora' : '';
+      conta.hidden = !d.n;
+    } catch (e) { /* aviso é acessório: se falhar, a tela segue */ }
+  }
+  conferir();
+  setInterval(conferir, 60000);
+})();
+
+// A trilha do funil tem de caber INTEIRA numa linha, em qualquer monitor: o
+// número de etapas varia (5 a 12) e a largura da tela também, então nenhum
+// tamanho fixo serve. Encolher é mudar UMA medida — `--f` —, porque todo o
+// resto do passo está em `em`. Abaixo de 0.56rem o nome deixa de ser legível,
+// e aí vale mais deixar a FILA rolar do que entregar um caminho ilegível.
+(function () {
+  const MAIOR = 0.80, MENOR = 0.56, PASSO = 0.01;
+  function encaixar(t) {
+    let f = MAIOR;
+    t.style.setProperty('--f', f + 'rem');
+    while (t.scrollWidth > t.clientWidth + 1 && f > MENOR) {
+      f = Math.round((f - PASSO) * 100) / 100;
+      t.style.setProperty('--f', f + 'rem');
+    }
+  }
+  function todas() { document.querySelectorAll('.trilha').forEach(encaixar); }
+  todas();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(todas);
+  let esperando;
+  addEventListener('resize', () => { clearTimeout(esperando); esperando = setTimeout(todas, 120); });
+  document.addEventListener('toggle', e => { if (e.target.tagName === 'DETAILS') todas(); }, true);
+})();
+
+// O balão do ⓘ não pode sair da tela. A posição é MEDIDA na hora de abrir.
+(function () {
+  const MARGEM = 10;
+  function ajustar(icone) {
+    const balao = icone.querySelector('.balao');
+    if (!balao) return;
+    balao.style.setProperty('--desloc', '0px');
+    balao.classList.remove('abaixo');
+    const r = balao.getBoundingClientRect();
+    let d = 0;
+    if (r.left < MARGEM) d = MARGEM - r.left;
+    else if (r.right > innerWidth - MARGEM) d = (innerWidth - MARGEM) - r.right;
+    if (d) balao.style.setProperty('--desloc', Math.round(d) + 'px');
+    if (r.top < MARGEM) balao.classList.add('abaixo');
+  }
+  document.addEventListener('mouseover', e => {
+    const i = e.target.closest?.('.info'); if (i) ajustar(i);
+  });
+  document.addEventListener('focusin', e => {
+    const i = e.target.closest?.('.info'); if (i) ajustar(i);
+  });
+})();
+</script>
+</body></html>

@@ -1,0 +1,105 @@
+{% extends "base.html" %}{% from "macros.html" import info, janela_transicao %}{% set pg='prazos' %}
+{% block titulo %}Prazos{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Prazos</h1></div>
+<p class="sub">{{ total }} prazo(s) neste recorte. A coluna <b>úteis</b> é a conta da CLT
+  (art. 775): dias úteis, sem feriado nacional e sem o recesso de 20/12 a 20/01
+  {{ info('Faltam os feriados do TRT (portarias anuais) e os municipais da sede da vara —
+           [CONFIRMAR]. Sem eles a conta erra para o lado CURTO: o prazo aparece vencendo
+           antes, nunca depois. É o lado seguro do erro.') }}</p>
+
+<form method="get" class="filtros">
+  <select name="tipo"><option value="">tipo — qualquer</option>
+    {% for t in tipos %}<option value="{{ t.codigo }}" {{ 'selected' if p.get('tipo')==t.codigo }}>{{ t.nome }} ({{ t.n }})</option>{% endfor %}</select>
+  <select name="origem"><option value="">origem — qualquer</option>
+    {% for o in ['DEJT','PJE','ATA_AUDIENCIA','DESPACHO','MANUAL','MIGRACAO'] %}
+    <option value="{{ o }}" {{ 'selected' if p.get('origem')==o }}>{{ o|rotulo }}</option>{% endfor %}</select>
+  <select name="responsavel"><option value="">responsável — qualquer</option>
+    {% for e in equipe_l %}<option value="{{ e.id }}" {{ 'selected' if p.get('responsavel')==e.id|string }}>{{ e.nome }}</option>{% endfor %}</select>
+  <button type="submit">filtrar</button><a href="/prazos" class="chip">limpar</a>
+</form>
+<div class="filtros">
+  {% for s in situacoes %}<a href="/prazos{{ qs(request, situacao=s.codigo) }}"
+    class="chip {{ 'on' if (p.get('situacao') or 'ABERTO')==s.codigo }}">{{ s.nome }} · {{ s.registros }}</a>{% endfor %}
+  <a href="/prazos{{ qs(request, situacao='todas') }}" class="chip {{ 'on' if p.get('situacao')=='todas' }}">todos</a>
+</div>
+
+<div class="cartao"><table>
+<tr><th>vence</th><th>úteis</th><th>tipo</th><th>processo</th><th>reclamante</th>
+    <th>origem</th><th>situação</th><th>responsável</th><th></th></tr>
+{% for z in linhas %}<tr class="{{ 'atrasado' if uteis.get(z.id) is not none and uteis[z.id] < 0 }}">
+  <td class="mono">{{ z.vencimento|data_br }}</td>
+  <td class="num">{{ uteis.get(z.id) if uteis.get(z.id) is not none else '—' }}</td>
+  <td>{{ z.tipo_nome or z.tipo|rotulo or '—' }}
+      {{ info(z.fundamento, z.tipo_nome) }}
+      {% if z.descricao %}<br><span class="sub">{{ z.descricao }}</span>{% endif %}</td>
+  <td class="mono"><a href="/processos/{{ z.proc_id }}">{{ z.numero_cnj|cnj }}</a></td>
+  <td>{{ z.cliente }}</td>
+  <td class="sub">{{ z.origem|rotulo }}
+      {% if z.audiencia_em %}<br><span class="sub">da audiência de {{ z.audiencia_em[:10]|data_br }}
+        (Súmula 197 TST)</span>{% endif %}</td>
+  <td><span class="marca-etapa">{{ z.situacao|rotulo }}</span>
+      {% if z.contagem != 'UTEIS' %}<br><span class="porque">corridos: {{ z.contagem_motivo }}</span>{% endif %}</td>
+  <td><form method="post" action="/prazo/{{ z.id }}/responsavel" class="linha-acoes">
+      <input type="hidden" name="voltar" value="/prazos">
+      <select name="pessoa_id" onchange="this.form.submit()">
+        <option value="">sem dono</option><option value="eu">eu</option>
+        {% for e in equipe_l %}<option value="{{ e.id }}" {{ 'selected' if z.responsavel_id==e.id }}>{{ e.nome }}</option>{% endfor %}
+      </select></form></td>
+  <td><button type="button" class="leve" onclick="abrirPrazo({{ z.id }})">mover</button></td>
+  </tr>{% endfor %}
+{% if not linhas %}<tr><td colspan="10" class="sub">nada neste recorte</td></tr>{% endif %}
+</table></div>
+
+{# A janela de transição do prazo. As saídas de cada linha vêm do servidor por
+   /mover, mas a lista de opções muda por prazo — então a janela é montada com
+   um fetch da própria ficha? Não: para não inventar uma rota nova, a janela
+   posta direto e o SERVIDOR recusa o que o mapa não permite, explicando. #}
+<dialog id="janelaPrazo" class="janela">
+  <form method="post" id="formPrazo">
+    <input type="hidden" name="voltar" value="/prazos">
+    <h2>Mover o prazo</h2>
+    <p class="sub">O que o mapa permite: cumprido (com protocolo e data), suspenso (com
+      motivo), sem objeto (com motivo) e — só gestor — perdido, com motivo. Prazo perdido é o
+      pior dia do escritório e precisa ser contado, não escondido.</p>
+    <label class="campo-janela">Para onde
+      <select name="para" required>
+        <option value="CUMPRIDO">cumprido — protocolei</option>
+        <option value="SUSPENSO">suspenso</option>
+        <option value="SEM_OBJETO">sem objeto</option>
+        <option value="PERDIDO">perdido (só gestor)</option>
+      </select></label>
+    <label class="campo-janela">Número do protocolo no PJe
+      <input type="text" name="protocolo" style="width:100%"></label>
+    <label class="campo-janela">Data do protocolo
+      <input type="date" name="cumprido_em" style="width:100%"></label>
+    <label class="campo-janela">Novo vencimento (ao retomar)
+      <input type="date" name="novo_vencimento" style="width:100%"></label>
+    <label class="campo-janela">Motivo
+      <input type="text" name="motivo" style="width:100%"></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button type="button" class="leve" onclick="document.getElementById('janelaPrazo').close()">cancelar</button>
+      <button type="submit">confirmar</button>
+    </div>
+  </form>
+</dialog>
+<script>
+function abrirPrazo(id) {
+  const f = document.getElementById('formPrazo');
+  f.action = '/mover/prazos/' + id;
+  document.getElementById('janelaPrazo').showModal();
+}
+</script>
+
+<details class="cartao"><summary><b>Os tipos de prazo e o que a lei diz</b></summary>
+  <p class="sub">Sai de <code>prazo_tipos</code>, não do template. `dias` vazio quer dizer que
+    o juízo fixa; aí o sistema propõe o padrão e a pessoa corrige.</p>
+  <table><tr><th>tipo</th><th class="num">dias úteis</th><th>fundamento</th><th>fase</th>
+    <th class="num">em uso</th></tr>
+  {% for t in tipos %}<tr><td>{{ t.nome }}</td>
+    <td class="num">{{ t.dias if t.dias else 'o juízo fixa' }}</td>
+    <td class="sub">{{ t.fundamento }}</td><td class="sub">{{ t.fase_usual|rotulo or '—' }}</td>
+    <td class="num">{{ t.n }}</td></tr>{% endfor %}
+  </table>
+</details>
+{% endblock %}
