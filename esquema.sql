@@ -1077,8 +1077,15 @@ ALTER TABLE incidentes      ADD CONSTRAINT fk_inc_reserva    FOREIGN KEY (petica
 -- criada por migration futura entra na mesma regra quando este bloco for
 -- reexecutado, e ninguém precisa lembrar de escrever a política à mão.
 -- ---------------------------------------------------------------------
-DO $$
-DECLARE t TEXT;
+-- Vira FUNÇÃO, e não um bloco solto, por um motivo que a conferência achou:
+-- `governanca.sql` roda DEPOIS deste arquivo e cria mais cinco tabelas
+-- (fluxos, fluxo_etapas, fluxo_transicoes, historico_etapas, prazo_tipos).
+-- Um bloco executado uma vez deixaria essas cinco sem RLS — e o mapa de etapas
+-- é justamente o que não pode ficar aberto na API pública. Como função, ela é
+-- chamada de novo no fim da montagem e a cada migration que criar tabela.
+CREATE OR REPLACE FUNCTION ligar_rls() RETURNS integer
+LANGUAGE plpgsql SET search_path = public AS $fn$
+DECLARE t TEXT; n INTEGER := 0;
 BEGIN
   FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public'
   LOOP
@@ -1087,13 +1094,23 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS p_app_trab ON public.%I', t);
     EXECUTE format('CREATE POLICY p_app_trab ON public.%I FOR ALL TO app_trab USING (true) WITH CHECK (true)', t);
     EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO app_trab', t);
+    n := n + 1;
   END LOOP;
   EXECUTE 'GRANT USAGE ON SCHEMA public TO app_trab';
   EXECUTE 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_trab';
-  -- e revoga o que o Supabase concede por padrão aos papéis da API pública
-  EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated';
-  EXECUTE 'REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated';
-END $$;
+  -- e revoga o que o Supabase concede por padrão aos papéis da API pública.
+  -- Num Postgres qualquer (o cluster de teste, por exemplo) esses papéis não
+  -- existem: a falta deles não é erro, é sinal de que não há API pública.
+  BEGIN
+    EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated';
+    EXECUTE 'REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated';
+  EXCEPTION WHEN undefined_object THEN
+    RAISE NOTICE 'sem anon/authenticated: este Postgres não serve API pública';
+  END;
+  RETURN n;
+END $fn$;
+
+SELECT ligar_rls();
 
 -- ---------------------------------------------------------------------
 -- 17. O que a governança deixou anotado para o esquema fechar.
