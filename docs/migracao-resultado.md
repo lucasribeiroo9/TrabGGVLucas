@@ -1,204 +1,228 @@
-# Resultado da migração — o que entrou, o que ficou para gente decidir
+# Resultado da migração — a carga REAL, provada
 
-> 03/09/2026. Escrito pelo DBA de migração. Nenhum nome de cliente, CPF, telefone, e-mail ou
-> número de processo aparece aqui.
+> 03/09/2026, segunda rodada do DBA de migração. Nenhum nome de cliente, CPF, telefone, e-mail ou
+> número de processo aparece aqui — só contagens.
 
 ## Onde a coisa está, em uma frase
 
-**O esquema está aplicado no Supabase e a carga está escrita e provada — mas a carga completa
-ainda não rodou**, porque nesta máquina não há o token de leitura do Airtable nem a senha do
-Postgres da produção. O caminho inteiro foi provado num Postgres 16 local contra uma amostra
-sintética que reproduz todos os casos difíceis da base real, e terminou em **TUDO CONFERE**.
-Rodar a carga de verdade é um comando (ver "O que falta", no fim).
+**A carga completa da base real rodou num Postgres 16 local e terminou em TUDO CONFERE** — pela
+carga direta (psycopg) e pelo plano B (o SQL gerado, aplicado num banco vazio), com os dois bancos
+iguais linha a linha. Não se conectou ao Supabase nesta rodada: a carga lá depende da URI que só o
+Lucas tem, e o esquema `public` de lá continua como a rodada anterior deixou (35 tabelas, RLS em
+todas, sem `governanca.sql` aplicada). Rodar lá é o comando do fim deste arquivo.
 
-## O banco, como está no Supabase agora
+## Como os dados chegaram sem o token do Airtable
 
-Projeto **PrevGGVLucas** (`yzayjwlgjjnoxdxgruss`), esquema `public` — que estava vazio desde que o
-Prev foi congelado em `prev_2026_09`. Não se tocou em `prev_2026_09` nem em `juridico`.
-
-| | |
-|---|---|
-| migrations aplicadas | 4 (`trab_esquema_01` … `trab_esquema_04`) |
-| tabelas | 35 |
-| visão | 1 (`documentos_pendentes`, sobre `pendencias`) |
-| chaves estrangeiras | 88 |
-| CHECKs | 229 |
-| RLS ligada | 35 de 35, com `FORCE` |
-| política do app | `p_app_trab` em 35 de 35 |
-| alertas de segurança no `public` | **nenhum** |
-
-Os alertas que o linter do Supabase mostra são todos de `prev_2026_09` (congelado, fora da API) e
-de `juridico` — nenhum é do trabalhista.
-
-**A RLS é deny-by-default para a API pública.** Não existe política para `anon` nem para
-`authenticated`, e o `GRANT` desses papéis foi revogado: pela API REST do Supabase não se lê nada.
-Quem lê e escreve é o sistema, pelo Postgres, com o papel `app_trab`. `ligar_rls()` é função, e
-não script solto, para que toda migration futura que criar tabela consiga religá-la numa linha.
-
-## Como a base foi lida: a CÓPIA como base, a PROCESSUAL por cima
-
-A decisão que o Lucas delegou, e a justificativa:
-
-**A base é a CÓPIA DA PROCESSUAL.** Ela tem 3.722 registros contra 2.652 da PROCESSUAL — 1.187
-processos a mais, 1.048 deles encerrados, distribuídos sobretudo entre 2017 e 2021. É o passivo
-histórico do escritório, que alguém carregou na cópia (e não na PROCESSUAL) para o pipeline de
-leitura dos autos enriquecer em 31/08/2026. É lá que estão a data da sentença, o magistrado, o
-resultado objetivo do recurso, o CPF, o CNPJ da reclamada, o relator e os honorários por base — e
-é lá que a fase está atualizada pela leitura dos autos (68% de encerrados contra 18%). Migrar pela
-PROCESSUAL seria começar o sistema sem dois terços do acervo e sem nenhum resultado medido.
-
-**A PROCESSUAL vence campo a campo no que a equipe edita hoje.** Os links vivos com pré-processual,
-testemunhas e pós-processual (que a duplicação de tabela transformou em texto na cópia), e os
-campos onde ela está preenchida e a cópia não: DATA REVOG (509 só nela), Nº CumPrSe (131), VALOR
-HOM (127), SUCUMB RECEBIDO (67), STATUS EXECUÇÃO (59), e os campos do incidente de representação.
-A lista está na coluna **vence** de `docs/de-para.md`, campo a campo.
-
-**Os 22 processos só na PROCESSUAL e os 106 sem número entram.** Sem número não há como casar:
-entram pela PROCESSUAL, cada um com uma conferência `SEM_NUMERO` aberta.
-
-**Onde as duas discordam, ninguém escolhe em silêncio.** As 1.403 divergências de FASE incluídas.
-Nasce linha em `conferencias` com o valor de cada lado, de qual tabela veio cada um, o que a
-migração gravou e o trecho de prova. Em nome, vara, nascimento e telefone a grafia perdida ainda
-vai para `processo_alias` — jogar fora seria perder o que talvez esteja certo.
-
-## O que vai entrar na carga completa
-
-Os números da origem em 03/09/2026 e para onde vão. O número exato de cada tabela sai do
-`conferir.py` depois da carga — aqui está a aritmética, não uma estimativa disfarçada de fato.
-
-| origem | registros | vira |
-|---|---|---|
-| FUNCIONARIOS | 72 | `pessoas` + `pessoa_papeis` (um papel por linha) |
-| EMPRESAS | 1.103 | `empresas` |
-| FRAGILIDADES | 17 | `fragilidades` (o banco de teses por reclamada) |
-| PRE PROCESSUAL | 797 | `clientes` + `pendencias` + `eventos` + `contatos` + `anotacoes` |
-| CÓPIA DA PROCESSUAL | 3.722 | `processos` (menos os 3 `INAPLICÁVEL`) |
-| PROCESSUAL | 2.652 | completa os processos; os que não casam entram como processo próprio |
-| PÓS PROCESSUAL | 556 | `recebimentos`, `repasses`, `processos.arquivado_em`, `tarefas` |
-| TESTEMUNHAS | 424 | `testemunhas` + `testemunha_vinculos` (497 ligações) |
-| AUDITORIA TESTEMUNHAS | 2 | `testemunha_auditoria`, como está |
-| Conferência de Faltantes | 1.067 | `conferencia_faltantes`, ligada a `processos` quando o CNJ casa |
-
-Contas: os processos são 3.722 da CÓPIA, menos 3 inaplicáveis, mais os registros da PROCESSUAL que
-não casaram (os 22 números só dela, os 106 sem número e os 8 duplicados).
-
-**Todo processo tem cliente.** As 797 fichas da pré-processual não cobrem 3.722 processos: para o
-resto, a migração casa pelo link vivo da PROCESSUAL, depois pelo CPF dos autos (97% preenchido na
-cópia), depois pelo nome quando ele é único no cadastro. O que não é seguro **não vira palpite**:
-nasce ficha com `origem_cadastro = 'PROCESSO'` e uma conferência `CLIENTE_AMBIGUO` aberta, porque
-cliente errado é pior que cliente novo. Nada de casar por semelhança — no Prev, semelhança casou
-*Marina* com *Marize*.
-
-## O que vai para `conferencias`, e por quê
-
-Sete tipos. Cada linha tem o valor de cada lado, o que a migração gravou e o trecho de prova; a
-tela de conferências dá dono, situação e anotação, como no Prev.
-
-| tipo | quando nasce |
-|---|---|
-| `DIVERGENCIA_FONTE` | a CÓPIA e a PROCESSUAL discordam em campo relevante (fase, status, nome, vara, valor, decisão, encerramento, acordo) — as 1.403 de FASE aqui |
-| `VALOR_SEM_TRADUCAO` | opção poluída sem tradução óbvia: `SIM `/`NÃO `/`EXECUÇÃO`/`RECURSAL` em STATUS EXECUÇÃO, rescisão em texto que não diz modalidade, TRT que não existe, `2500%` de sucumbência, papel que não está na lista |
-| `CNJ_DUPLICADO` | o mesmo número em mais de um registro (8 na PROCESSUAL, 19 na CÓPIA). Cada um vira um processo: perder linha seria pior |
-| `SEM_NUMERO` | os 106 da PROCESSUAL sem número — não há como casar |
-| `CLIENTE_AMBIGUO` | mais de uma ficha com o mesmo nome e sem CPF que decida |
-| `LINK_QUEBRADO` | registro do PÓS PROCESSUAL sem link e sem número que case |
-| `FORA_DO_ESCOPO` | os 3 `INAPLICÁVEL` da CÓPIA: não são processos trabalhistas nossos e não viram processo |
-| `DATA_ILEGIVEL` | DEMISSAO com telefone, "SIM" ou texto no lugar da data |
-
-A conferência **preserva o trabalho humano**: recarregar não apaga dono, situação nem anotação —
-elas voltam recasadas pela `chave`. Está provado em teste.
-
-## O que fica só em `airtable_bruto`, e por quê
-
-`airtable_bruto jsonb` guarda o **registro original inteiro** em toda linha migrada — inclusive o
-que já tem coluna própria. Nos processos são os dois lados: `{"copia": {...}, "processual": {...}}`.
-Assim "descartado" nunca quer dizer "perdido": quer dizer "sem coluna na tela".
-
-| o que | por que não virou coluna |
-|---|---|
-| `_BACKUP_VALOR/COMPLEXIDADE/FEITO_EM_SCRIPT` (233/181/233) | backup que um script fez antes de reescrever campos em julho/2026. Dar coluna a um rascunho é dar-lhe status de dado |
-| `TESE PRINCIPAL` (0/797) | vazio em 100%: campo que ninguém preencheu não ganha lugar na tela |
-| `CADASTRADO POR`, `ÚLTIMA ALTERAÇÃO POR/EM` (0/424) | previstos para o Formulário Interno Único, que ainda não está em uso |
-| `origem_comercial_tabela_id` (0/424) | vazio em 100% |
-| `MOTIVO` (5 registros nas duas tabelas) | sem função clara; um deles diz "SEM TESTEMUNHA" |
-| `PROCESSUAL copy` no PÓS (436) | link legado para a CÓPIA; a ligação útil é a do número CNJ |
-| as ~40 opções poluídas sem tradução | ficam no `_original` da coluna e abrem conferência |
-
-Dezesseis das 35 tabelas **não** têm `airtable_bruto`, e é de propósito: `tarefas`, `eventos`,
-`contatos`, `acordo_parcelas`, `repasses`, `peticoes`, `anotacoes`, `conferencias`, `auditoria`,
-`automacoes`, `usuarios`, `processo_alias`, `pessoa_papeis`, `testemunha_vinculos`,
-`automacao_log` e `migracao_execucoes` não vêm de um registro do Airtable — são derivadas dele ou
-nascem no sistema. O bruto do registro que as originou está na linha-mãe.
-
-## O que a prova achou (e por que ela existe)
-
-A carga rodou contra um Postgres 16 local com a amostra sintética de `dados_exemplo.py`. Três
-defeitos apareceram, e nenhum deles apareceria numa conferência de contagem:
-
-1. **A sequência de identidade ficava para trás.** A carga grava id explícito
-   (`OVERRIDING SYSTEM VALUE`) para ser determinística, e isso **não** adianta a sequência. A
-   contagem batia, o `conferir.py` dizia TUDO CONFERE — e o **primeiro cadastro feito na tela**
-   estouraria com "duplicate key". Quem denunciou foi um gatilho de histórico ao gravar a primeira
-   transição de fase. Agora a carga acerta todas as sequências no fim, e o `conferir.py` prova isso.
-2. **Cinco tabelas ficavam sem RLS.** O bloco que liga a RLS rodava no fim de `esquema.sql`, e
-   `governanca.sql` roda **depois**, criando `fluxos`, `fluxo_etapas`, `fluxo_transicoes`,
-   `historico_etapas` e `prazo_tipos`. O mapa de etapas ficaria aberto na API pública. Virou
-   função (`ligar_rls()`), chamada de novo no fim da montagem.
-3. **CNJ repetido grudava o mesmo registro em duas linhas.** Cada registro da PROCESSUAL agora casa
-   com um da CÓPIA e só um; o segundo vira processo próprio com conferência aberta. Sem isso o
-   índice único do record de origem derrubava a carga no meio — e derrubar no meio é melhor que
-   passar, mas nenhum dos dois é o certo.
-
-Os gatilhos foram testados depois da carga, com a governança religada: transição fora do mapa
-recusada, transição do mapa aceita e histórico gravado sozinho, ação depois da prescrição bienal
-recusada, prazo em dias corridos sem justificativa recusada. A carga do passivo passa por fora
-(gatilhos desligados) e a regra volta inteira no fim — como o `--baixar` do Prev faz.
-
-Recarregar duas vezes seguidas dá o mesmo resultado, e a segunda carga preserva as conferências
-já resolvidas. Provado.
-
-## O que falta para rodar a carga completa
-
-Dois segredos e três comandos. Nada mais.
+O agente Leitor baixou as dez tabelas pelo **conector MCP do Airtable** (somente leitura). O
+conector devolve outra forma que a API REST — `records[].cellValuesByFieldId` com o id do campo
+como chave, select como objeto `{id,name,color}`, link como `[{id,name}]`, lookup como
+`{linkedRecordIds, valuesByLinkedRecordId}`, colaborador com `permissionLevel` e foto. `do_conector.py`
+converte para a forma que `migrar.py` já lia (`fields` por NOME, select como texto, link como
+lista de `rec…`), e **recusa** duas coisas: id de campo sem nome no mapa e forma de valor que não
+conhece. Nas duas o resultado seria perda calada.
 
 ```bash
-export GGV_AIRTABLE_TRAB=...      # token de LEITURA da base (o script só faz GET)
-export GGV_SUPABASE_TRAB=...      # a ligação com o Postgres do PrevGGVLucas
-
-./.venv/bin/python migrar.py --baixar    # Airtable → dados/*.json
-./.venv/bin/python migrar.py --recriar   # esquema + governança + carga
-./.venv/bin/python conferir.py           # só passa com TUDO CONFERE
+./.venv/bin/python migrar.py --do-conector --origem PASTA   # ou: do_conector.py --origem PASTA
+./.venv/bin/python migrar.py --recriar                      # esquema + governança + carga
+./.venv/bin/python conferir.py                              # só passa com TUDO CONFERE
 ```
 
-`--recriar` apaga o `public` e o refaz de `esquema.sql` + `governanca.sql`. Para carregar sem
-mexer no esquema (o caso normal, depois da primeira vez), rode `migrar.py` sem a opção: ele apaga
-o que a migração escreve e preserva contas de acesso, automações e conferências resolvidas.
+A conversão real: **10.412 registros em 10 tabelas, 350 campos, nenhum sem nome, nenhuma forma
+desconhecida**. As formas convertidas: 137.921 escalares, 59.823 selects, 21.704 links, 7.595
+botões, 5.253 lookups, 4.146 colaboradores, 1.757 multi-selects, 7 anexos. Um único aviso:
+FUNCIONARIOS tem dois campos chamados "PROCESSUAL copy" (links inversos); o segundo recebeu o
+sufixo `[fld…]` para nenhum dos dois sumir. A conferência cruzada com o schema bruto (que cobre
+8 das 10 tabelas — CÓPIA e AUDITORIA não estão nele) não achou discordância de tipo.
 
-**`governanca.sql` ainda não foi aplicada no Supabase.** É o arquivo do arquiteto e ainda é
-proposta; `migrar.py --recriar` a aplica junto com o esquema, e a partir daí os 15 gatilhos e as
-4 visões passam a valer. Antes de rodar a carga completa, confira a cópia externa (pg_dump) do
-Prev, como manda o `CLAUDE.md`.
+## O que entrou — linhas por tabela
+
+| tabela | linhas | | tabela | linhas |
+|---|---:|---|---|---:|
+| pessoas | 72 | | decisoes | 3.668 |
+| pessoa_papeis | 92 | | recursos | 2.470 |
+| empresas | 1.103 | | calculos | 1.755 |
+| fragilidades | 17 | | acordos | 1.393 |
+| clientes | **3.067** (797 da PRÉ + 2.270 criados dos autos) | | recebimentos | 2.428 |
+| pendencias | 2.235 | | incidentes | 226 |
+| processos | **3.855** | | tarefas | 202 |
+| processo_alias | 653 | | eventos | 3.432 |
+| audiencias | 3.035 | | contatos | 164 |
+| pericias | 15 | | anotacoes | 990 |
+| testemunhas | 424 | | documentos (metadado de anexo) | 8 (4.320.523 bytes) |
+| testemunha_vinculos | 510 | | automacao_log | 1.629 |
+| testemunha_auditoria | 2 | | historico_etapas | 10.183 |
+| conferencia_faltantes | 1.067 | | conferencias | **3.300** |
+
+Zero, de propósito: `acordo_parcelas`, `repasses`, `prazos`, `peticoes`, `usuarios`,
+`automacoes`, `auditoria` — nascem no sistema, não na origem. `fluxos`, `fluxo_etapas`,
+`fluxo_transicoes` e `prazo_tipos` vêm de `governanca.sql` (5 / 40 / 111 / 18).
+
+Contas que fecham: 3.855 processos = 3.722 da CÓPIA − 3 `INAPLICÁVEL` + 136 da PROCESSUAL que
+não casaram por CNJ (106 sem número, 22 só nela, 8 duplicados). Dos 3.719 vindos da CÓPIA, 2.516
+casaram com um registro da PROCESSUAL e trazem os dois lados no `airtable_bruto`.
+
+## A prova, por tipo — o que `conferir.py` recalcula da origem e compara
+
+| tipo de conferência | linhas | resultado |
+|---|---:|---|
+| contagem por tabela (inclui anexos, bytes de anexo, pendências, audiências, perícias, histórico, testemunhas sem nome) | 19 | ok |
+| contagem por opção de select (papel, situação de empresa/testemunha, modalidade da rescisão, canal/campanha, documento pendente, turma/órgão, etapa do cliente, fase, situação da execução, tipo de audiência, resultado da sentença e do acórdão, situação do acordo) | 112 | ok |
+| soma de cada campo em R$, ao centavo (valor da causa, 9 campos de cálculo, acordo, honorário, parcela, 4 bases de recebimento, fragilidades, faltantes) + valor implausível → conferência | 20 | ok |
+| cada ligação do Airtable (13 FKs: clientes, processos, testemunhas, fragilidades, faltantes; testemunha×processo 336, testemunha×cliente 174) | 13 | ok |
+| integridade (record repetido, bruto ausente, fase e etapa fora do mapa, histórico, gatilhos ligados, sequências, RLS, STATUS EXECUÇÃO conferido ou aplicado) | 18 | ok |
+| **total** | **182 linhas** | **TUDO CONFERE** |
+
+Somas que atravessaram inteiras (em centavos): valor da causa 69.961.541.433; cálculo do
+reclamante 4.431.877.169; homologado 6.773.521.615; acordos 2.929.091.297; recebido total
+3.751.889.977; honorários recebidos 1.608.767.575; faltantes 9.438.361.012.
+
+Provado também: **recarregar sem `--recriar` preserva o trabalho humano** — duas conferências
+marcadas à mão (uma RESOLVIDA com dono, anotação e data; uma IGNORADA) voltaram intactas depois
+da recarga, e a prova seguiu passando. E o **plano B** (`dados/carga_real.sql`, 36.673.158 bytes,
+53.369 linhas, 48.224 INSERTs, gerado em 2 s) aplicado com `psql -v ON_ERROR_STOP=1` num banco
+vazio em 25 s deu TUDO CONFERE e as mesmas contagens em todas as tabelas. É o caminho para subir
+ao Supabase sem URI, em blocos pelo `apply_migration`. Fica em `dados/`, fora do git.
+
+## Quantos valores foram normalizados, de/para — os campos poluídos
+
+| campo | preenchidos | traduzidos | ficaram só no `_original` + conferência |
+|---|---:|---:|---:|
+| RESCISAO (PRÉ, texto livre) | 666 | 565: 330 SEM_JUSTA_CAUSA · 101 RESCISAO_INDIRETA · 86 PEDIDO_DEMISSAO · 40 JUSTA_CAUSA · 7 CONTRATO_VIVO · 1 TERMINO_CONTRATO | 101 (75 trazem data/telefone, 26 texto sem modalidade) |
+| STATUS EXECUÇÃO (PROCESSUAL vence; 36 opções) | 810 na CÓPIA, 615 na PROCESSUAL | 629 estados limpos em 12 valores (298 AGUARDANDO_CALCULO, 76 EM_RECURSO_EXECUCAO, 61 AGUARDANDO_TRANSITO, 57 HOMOLOGADO, 53 CALCULOS_APRESENTADOS, 34 PESQUISA_PATRIMONIAL, 23 AGUARDANDO_ALVARA, 11 RECEBIDO, 7 PARCELAMENTO_916, 5 PERICIA_CONTABIL, 1 NEGOCIANDO_ACORDO) | 243: 45 poluídos (SIM/NÃO/EXECUÇÃO/RECURSAL) + 198 na coluna errada, dos quais 174 coerentes com a fase (aplicados ou nada a fazer) e 24 em conferência |
+| FASE PROCESSUAL (CÓPIA) | 3.722 | 3.719 em 9 fases: 2.638 ENCERRADO · 646 CONHECIMENTO · 449 RECURSAL · 74 EXEC. DEFINITIVA · 19 EXEC. PROVISÓRIA · 15 ACORDO · 12 SOBRESTADO · 1 RECEBENDO · 1 DESISTENCIA | 3 INAPLICÁVEL (fora do escopo) + 66 "EXECUÇÃO" sem CumPrSe nem trânsito (entram DEFINITIVA com conferência) |
+| STATUS DO PROCESSO (CÓPIA) | 3.722 | 2.549 ARQUIVADO → resultado_final · 174 ROUBADO/RECEBIDO POR ELES/RECUPERADO → incidentes · 25 TRÂNSITO → transito_em · 12 SOBRESTADO → fase · 625 derivados (aguardando audiência/sentença/acórdão) | 0 |
+| TURMA (CÓPIA, texto) | 1.411 | 1.411: 20 turmas, 1 câmara, 4 órgãos — 270 "VICE-PRESIDÊNCIA JUDICIA" (texto cortado em 24 caracteres) viraram VICE-PRESIDÊNCIA JUDICIAL por prefixo | 0 (o "11" da PROCESSUAL nunca vence a CÓPIA) |
+| TRT (CÓPIA) | 3.722 | 3.722 em 19 números; 108 processos sem TRT em nenhuma das fontes | 0 |
+| CLASSIFICACAO | 3.674 | 3.377 classe+rito (2.701 AT ordinário, 378 AT sumaríssimo, 302 RT ordinário) · 305 classe de incidente (194 exec. provisória, 105 definitiva, 6 embargos de terceiro) | 0 |
+| AUDIENCIA (tipo + modalidade + rito no mesmo campo) | 2.898 | 2.914 audiências com tipo (1.479 UNA, 1.012 INSTRUÇÃO, 283 INICIAL, 118 CONCILIAÇÃO EM EXECUÇÃO, 22 JULGAMENTO); 324 por vídeo; 167 UNA-RS marcam rito sumaríssimo [CONFIRMAR 17] | 121 audiências só com data, sem tipo |
+| DECISAO SENTENCA / RESULTADO RECURSO | 2.118 / 1.244 | 2.148 sentenças e 1.520 acórdãos em `decisoes`; 1 sentença completada por ULTIMA DECISAO | 0 |
+| FONTE (PRÉ) | 77 | 77: 59 PROJETO/PUXADA (inclui "JUXADA" e "17/06") · 9 DISPARO/LAILLA · 3 INDICAÇÃO (três grafias) · 1 CLIENTE ATIVO · 1 BENEFÍCIO E ERROS · 1 OUTRO | 0; 720 fichas sem fonte |
+| STATUS ENTREVISTA (PRÉ) | 592 | 448 ENTREVISTA-OK → fato · 113 DESISTÊNCIA + 17 SEM RESPOSTA + 2 STAND-BY + 3 PENDENTE → etapa · 7 AGENDADA → evento · 2 PRIMEIRO CONTATO → contatos | 0 |
+| PENDENCIAS (PRÉ, multi-select) | 2.239 marcas | 2.235 pendências de documento em 8 tipos (472 TRCT, 465 PROVAS, 441 HOLERITES — 36 delas "HOLERITE" —, 388 DOCS MÉDICOS, 244 FGTS, 113 CTPS, 98 CNH/RG, 14 PIS) | 4 ("OK", "DOCUMENTAÇÃO OK": não são documento) |
+| ETAPA + STATUS PETIÇÃO + STATUS ENTREVISTA + STATUS DOCUMENTAÇÃO → uma etapa | 797 | 489 DISTRIBUIDO · 169 CANCELADO · 54 PET. AGUARDANDO APROVAÇÃO · 35 PET. PENDENTE · 19 DOCUMENTAÇÃO · 14 SEM RESPOSTA · 6 PET. EM CRIAÇÃO · 5 PET. APROVADA · 4 ENTREVISTA · 2 STAND BY | 3 divergências ETAPA×PETIÇÃO em conferência |
+| REVOGAÇÃO (PROCESSUAL vence) | 1.029 / 696 | 774 SIM · 39 NÃO · 42+46 NÃO SE APLICA; 5 recados viraram tarefa | 0 |
+| AND. NECESSÁRIO | 138 / 127 | 73 tarefas de andamento (inclui 3 recados longos, título cortado e texto inteiro guardado); "Encerrado" (63) e "ACORDO" (1) não viram tarefa | 0 |
+| DEMISSAO (PRÉ, 6 grafias de data) | 616 | 616 | 0 |
+| NASCIMENTO (CÓPIA, texto) | 2.509 | 2.508 | 1 (ano 2977) |
+| SUCUMBENCIA % | 558 / 259 | 555 | 3 ("2500%", "38.75%") |
+| VALOR (faltantes) | 600 | 599 | 1 (vinte dígitos: número de processo no campo de moeda) |
+| CPF (CÓPIA, dos autos) | 3.610 | 3.608 gravados em `cpf_parte`; cliente por CPF válido em 2.129 dos 2.270 criados dos autos | — |
+
+## As divergências CÓPIA × PROCESSUAL, por campo
+
+Só nos 2.516 processos em que as duas fontes casaram por CNJ. Cada uma é uma linha de
+`conferencias` com os dois valores, de onde veio cada um e o que a migração gravou.
+
+| campo | divergências | quem venceu na gravação |
+|---|---:|---|
+| FASE PROCESSUAL | 1.405 | CÓPIA (atualizada pela leitura dos autos em 31/08) |
+| VARA | 569 | CÓPIA; a grafia da PROCESSUAL foi para `processo_alias` (569) |
+| STATUS DO PROCESSO | 341 | CÓPIA |
+| VALOR | 271 | CÓPIA |
+| ENCERRAMENTO | 197 | CÓPIA |
+| NOME | 84 | CÓPIA; a outra grafia em `processo_alias` (84) |
+| DECISAO SENTENCA | 30 | CÓPIA |
+| STATUS ACORDO | 20 | CÓPIA |
+| **total** | **2.917** | |
+
+Mais 3 divergências internas da PRÉ (ETAPA diz concluído, STATUS PETIÇÃO não). A regra de quem
+vence está na coluna **vence** de `docs/de-para.md`; nos 11 campos em que a PROCESSUAL vence
+(DATA REVOG, Nº CumPrSe, VALOR HOM, SUCUMB RECEBIDO, STATUS EXECUÇÃO, REVOGAÇÃO, NOTIFICAÇÃO,
+PROVIDENCIAS, CLIENTE AVISADO?, AND. NECESSÁRIO, SITU. EMPRESA) não se abre conferência, por
+decisão de projeto: são os campos que a equipe edita hoje só lá.
+
+## As 3.300 conferências, por tipo
+
+| tipo | linhas | o que é |
+|---|---:|---|
+| DIVERGENCIA_FONTE | 2.920 | a tabela acima |
+| VALOR_SEM_TRADUCAO | 241 | 101 rescisão · 69 STATUS EXECUÇÃO (45 poluídos + 24 na coluna errada e incoerentes com a fase) · 66 "EXECUÇÃO" sem qualificação · 2 sucumbência fora do art. 791-A · 2 testemunhas sem nome · 1 valor implausível |
+| SEM_NUMERO | 106 | registros da PROCESSUAL sem CNJ: entraram como processo próprio |
+| CNJ_DUPLICADO | 25 | 19 na CÓPIA, 6 na PROCESSUAL: cada um virou um processo |
+| FORA_DO_ESCOPO | 3 | os `INAPLICÁVEL` |
+| LINK_QUEBRADO | 3 | PÓS PROCESSUAL sem link e sem CNJ que case |
+| DATA_ILEGIVEL | 1 | nascimento com ano 2977 |
+| CLIENTE_AMBIGUO | 1 | duas fichas com o mesmo nome e sem CPF que decida: nasceu ficha nova |
+
+## O que fica só em `airtable_bruto` — contagens reais
+
+`airtable_bruto` guarda o registro inteiro em toda linha migrada (nos processos, os dois lados).
+O que **não** tem coluna própria, e quantos registros preenchem cada um:
+
+| o que | preenchidos | por quê |
+|---|---:|---|
+| `_BACKUP_VALOR / _COMPLEXIDADE / _FEITO_EM_SCRIPT` (PROCESSUAL) | 233 / 181 / 233 | backup de um script de julho/2026; rascunho não ganha coluna |
+| `Created By` (PROCESSUAL 2.652 · CÓPIA 3.722 · TESTEMUNHAS 424) | 6.798 | quem criou o registro no Airtable; na PROCESSUAL é `lastModifiedTime` com nome errado |
+| `ENVIAR MENSAGEM` (botão, 4 tabelas) · `LINK DA TESTEMUNHA` | 7.595 · 424 | URL montada dos outros campos: recalcula-se |
+| `SITU. EMPRESA` (lookup) · `EMPRESA PROCESSADA` | 4.469 · 784 | JOIN com `empresas` |
+| `MOTIVO` (PROCESSUAL 1 · CÓPIA 4) | 5 | sem função clara |
+| `PROCESSUAL copy` (PÓS) | 436 | link legado para a CÓPIA; a ligação útil é o CNJ |
+| `STATUS RECEBIMENTO` (PÓS) | 80 | derivado de `recebimentos` |
+| `ENCONTROU NOSSO CLIENTE NA ETAPA PROCESSUAL` (TESTEMUNHAS) | 44 | vai como observação do `testemunha_vinculo` com processo |
+| `PRESCREVE` · `prescrição próxima` · `URGENCIA` (fórmulas da PRÉ) | 616 · 49 · 226 | derivados: conta de data na view |
+| `TESE PRINCIPAL`, `CADASTRADO POR`, `ÚLTIMA ALTERAÇÃO POR/EM`, `origem_comercial_tabela_id`, `EVENTOS`, `DATA DE ASSINATURA` (PÓS), `STATUS REPASSE`, `PROCESSUAL 2`, `✅ VALIDAR E SUBIR`, `DOSSIE` | 0 | vazios em 100% na base real |
+| contadores e links inversos (`QTD *`, `VINCULADOS *`, `rec_id`, `TEMP_RECORD_ID`, `PROCESSUAL copy` em FUNCIONARIOS/EMPRESAS, `PRE PROCESSUAL`/`PROCESSUAL`/`TESTEMUNHAS` em EMPRESAS e FUNCIONARIOS) | — | o outro lado de uma FK, e o COUNT sobre ela |
+
+## O que a carga real revelou que a amostra não mostrou
+
+Sete defeitos. Nenhum apareceria numa conferência de contagem simples, e três deles só
+apareceram porque a prova recalcula da origem.
+
+1. **Um número de processo no campo de valor.** Em Conferência de Faltantes, um `VALOR` de vinte
+   dígitos: em centavos estoura o `bigint` e derrubou a carga inteira no passo 9 de 10. Agora
+   `normalizar.dinheiro()` recusa o que passa de R$ 1 bilhão — fica NULL, o original no bruto, e
+   abre conferência — e `conferir.py` exige que cada implausível tenha a sua.
+2. **270 turmas "cortadas".** A CÓPIA guarda TURMA como texto de 24 caracteres: "VICE-PRESIDÊNCIA
+   JUDICIA". Só um órgão começa assim; entra por prefixo, e a distribuição de turma passou a ser
+   provada.
+3. **Duas testemunhas sem nome que a carga pulava** — e com elas um vínculo com processo e um
+   status. Perda zero: entram como "(sem nome na origem)" com conferência, e a prova passou a
+   contar 424, não 422.
+4. **198 processos com STATUS EXECUÇÃO na coluna errada** (ARQUIVADO, EXTINTA, EXECUÇÃO
+   PROVISÓRIA, SOBRESTADO, AUDIÊNCIA CONCILIAÇÃO) que a primeira versão guardava no `_original` e
+   ignorava, calada. Agora: coerente com a fase gravada, aplica-se (EXTINTA em processo encerrado
+   vira `resultado_final`) ou nada há a fazer; incoerente (24), conferência. A prova recalcula a
+   regra.
+5. **Um IMPROCEDENTE a mais no banco** que na origem: ULTIMA DECISAO completava a sentença num
+   UPDATE que a prova não recalculava. A regra mudou para um método só (`resultado_sentenca`),
+   usado pelos dois — o mesmo remédio do `fase_final`.
+6. **98 rescisões indiretas em branco** por um trecho de de/para com acento — os trechos são
+   comparados com o texto sem acento, e "RESCISÃO INDIRET" nunca casava. A prova não pegou porque
+   não conferia a distribuição da rescisão; agora confere rescisão, canal, documento pendente e
+   turma. É o defeito mais instrutivo da rodada: um de/para "melhorado" à mão piorou a carga, e
+   só a contagem por opção denuncia isso.
+7. **O plano B estava quebrado.** O SQL gerado dobrava a barra invertida; com
+   `standard_conforming_strings` ligado (padrão do Postgres e do Supabase) isso corrompe o JSON do
+   `airtable_bruto` que traz `\"`, e o `psql` parava no INSERT 3.171. A carga direta por psycopg
+   nunca passa por aí — por isso nunca apareceu. Junto: o casamento PÓS/faltantes → processo por
+   CNJ saía de um SELECT, que em modo arquivo devolvia vazio; o mapa agora vive em memória e o
+   SQL produz o mesmo banco da carga direta, provado tabela a tabela.
+
+Mais três que não são defeitos, mas vale saber: o `docs/.airtable_schema_raw.json` cobre 8 das
+10 tabelas (falta CÓPIA e AUDITORIA), então o conversor decide o tipo pela forma do valor e usa o
+schema só como conferência; `DOSSIE` das fragilidades está vazio em 100% (os 8 anexos são todos de
+testemunhas); e 720 das 797 fichas da PRÉ não têm FONTE — a taxa de conversão por canal nasce
+sem histórico, como a resposta 5 do Lucas já previa.
 
 ## O que depende do Lucas
 
-As seis que mudam **dado gravado**, não só a tela. As demais estão marcadas `[CONFIRMAR]` no
-`esquema.sql` e no `de-para.md`.
+As da rodada anterior continuam (PENDENCIAS pedido×falta — respondida: é falta, e assim entrou;
+REVOGAÇÃO dois sentidos; AÇÃO×DISTRIBUIÇÃO; UNA-RS; TRATAMENTO; ARQUIVO TST), mais duas que a
+carga real trouxe:
 
-1. **`PENDENCIAS`: pedido ou falta?** (pergunta 7) — hoje cada item marcado vira pendência
-   **aberta**. Se a marca significava "já recebido", 551 fichas nascem cobrando documento que já
-   chegou. É a decisão de maior impacto na tela do dia seguinte.
-2. **`REVOGAÇÃO`, os dois sentidos** (pergunta 20) — a migração decide pelo STATUS DO PROCESSO: em
-   processo ROUBADO é o cliente que nos revogou (vai para `incidentes`); nos demais somos nós que
-   juntamos a revogação do patrono anterior (vai para `processos`). Se a leitura for outra, 529 +
-   839 registros mudam de lugar.
-3. **`AÇÃO` × `DISTRIBUIÇAO`** — são a mesma data? Hoje entram em colunas diferentes
-   (`ajuizamento_em` e `distribuicao_em`). Se forem a mesma coisa, uma some.
-4. **`UNA-RS` = rito sumaríssimo?** (pergunta 17) — se sim, 167 audiências também gravam
-   `processos.rito`.
-5. **`TRATAMENTO`** em STATUS DOCUMENTAÇÃO (5 registros) — é etapa de trabalho interno? Hoje vira
-   a flag `em_tratamento`.
-6. **`ARQUIVO TST`** — é a data do arquivamento no TST? A descrição na origem é cópia errada da de
-   outro campo, e 254 registros dependem disso.
+7. **`TURMA` = "11"** (1 processo) — é a 11ª Turma? Hoje fica NULL com conferência.
+8. **`RESCISAO` = "DEMISSÃO"** sozinho (9 fichas) — sem justa causa ou a pedido? A urgência de
+   rescisão indireta e a prescrição dependem da modalidade.
 
-E uma que não é do banco, mas trava a tela: **a lista fechada de setores e quem chefia cada um**
-(pergunta 30). `pessoas.setor` está lá, vazio, esperando.
+## Para rodar no Supabase
+
+```bash
+export GGV_SUPABASE_TRAB=...                 # a URI do Postgres do PrevGGVLucas
+./.venv/bin/python migrar.py --recriar       # apaga o public e refaz: esquema + governança + carga
+./.venv/bin/python conferir.py               # 182 linhas, TUDO CONFERE
+```
+
+Antes: a cópia externa (pg_dump) do `prev_2026_09`, como manda o `CLAUDE.md`. `--recriar` apaga o
+`public` — e só ele. Sem URI, o plano B é `dados/carga_real.sql` em blocos pelo `apply_migration`
+(36,7 MB; o arquivo começa com `SET standard_conforming_strings = on`, DROP/CREATE SCHEMA e os dois
+`.sql`, depois 48.224 INSERTs em ordem de dependência, e termina acertando as sequências).

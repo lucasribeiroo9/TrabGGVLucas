@@ -5,6 +5,7 @@
 O Airtable é SOMENTE LEITURA: este script só faz GET. Nada aqui escreve lá.
 
     ./.venv/bin/python migrar.py --baixar        # Airtable → dados/*.json (só GET)
+    ./.venv/bin/python migrar.py --do-conector --origem PASTA   # JSON do conector MCP → dados/*.json
     ./.venv/bin/python migrar.py                 # dados/*.json → banco
     ./.venv/bin/python migrar.py --recriar       # apaga o public e refaz do esquema
     ./.venv/bin/python migrar.py --amostra 40    # 40 registros por tabela, para provar o caminho
@@ -167,6 +168,9 @@ class Banco:
         self.conta = defaultdict(int)
         self.arquivo = open(sql_saida, "w") if sql_saida else None
         self.con = None
+        if self.arquivo:
+            # o arquivo não pode depender da configuração de quem o aplica
+            self.arquivo.write("SET standard_conforming_strings = on;\n")
         if not sql_saida:
             import psycopg
             self.con = psycopg.connect(dsn, autocommit=False)
@@ -201,7 +205,11 @@ class Banco:
             return repr(v)
         if isinstance(v, (dict, list)):
             v = json.dumps(v, ensure_ascii=False)
-        return "'" + str(v).replace("'", "''").replace("\\", "\\\\") + "'"
+        # Só a aspa dobra. A barra invertida fica como está: com
+        # `standard_conforming_strings` ligado (padrão do Postgres e do Supabase)
+        # '\' dentro de aspas simples é literal, e dobrá-la corrompia o JSON do
+        # `airtable_bruto` que traz `\"` — o SQL do plano B parava no INSERT 3.171.
+        return "'" + str(v).replace("'", "''") + "'"
 
     def inserir(self, tabela, dados):
         """Insere e devolve o id. Valor None não vira coluna: deixa o DEFAULT valer."""
@@ -299,6 +307,7 @@ class Migracao:
         self.cliente_por_cpf = {}
         self.cliente_por_nome = defaultdict(list)
         self.processo = {}
+        self.processo_por_cnj = {}         # dígitos do CNJ → id do PRIMEIRO processo com ele
         self.testemunha = {}
         self.hist = []                     # (entidade, id, etapa)
 
@@ -637,10 +646,15 @@ class Migracao:
 
             trt_, av_trt = N.trt(v("TRT"))
             turma_, av_turma = N.turma(v("TURMA"))
-            sit_exec, sit_orig, av_exec = self.situacao_execucao(fc, fp)
+            par_aud, _ = N._traduz(N.AUDIENCIA, v("AUDIENCIA"), "tipo")
+            sit_exec, sit_orig, av_exec, aplicado = self.situacao_execucao(
+                fc, fp, fase, par_aud[0] if par_aud else None)
+            if aplicado and aplicado[0] == "resultado_final" and not resultado_final:
+                resultado_final = aplicado[1]
             pct, av_pct = N.percentual(v("SUCUMBENCIA %"))
             cnpj, razao = N.cnpj_razao(campo(fc, "CNPJ RECLAMADA"))
-            nasc, _ = data_br(v("NASCIMENTO"), "nascimento_parte")
+            nasc, av_nasc = data_br(v("NASCIMENTO"), "nascimento_parte")
+            valor_causa, av_valor = N.dinheiro(v("VALOR"), "valor_causa_centavos")
             ultima_mov = txt(v("ULTIMA MOV"))
             mov_em = (ultima_mov or "")[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", ultima_mov or "") else None
 
@@ -659,7 +673,7 @@ class Migracao:
                 arquivo_tst_em=data_iso(campo(fc, "ARQUIVO TST")),
                 tel_vara=txt(v("TEL VARA")),
                 rito=rito, classe_cnj=classe, classe_incidente=classe_inc,
-                valor_causa_centavos=centavos(v("VALOR")),
+                valor_causa_centavos=valor_causa,
                 complexidade=txt(v("COMPLEXIDADE")),
                 distribuicao_em=data_iso(v("DISTRIBUIÇAO")),
                 ajuizamento_em=data_iso(v("AÇÃO")), assinatura_em=data_iso(v("ASSINATURA")),
@@ -680,25 +694,78 @@ class Migracao:
             self.processo[rec_copia or rec_proc] = pid
             if rec_proc:
                 self.processo[rec_proc] = pid
+            cnj = so_digitos(v("Nº PROCESSO"))
+            if cnj:
+                self.processo_por_cnj.setdefault(cnj, pid)
             self.hist.append(("processos", pid, fase))
-            for a in (av_cl, av_trt, av_turma, av_exec, av_pct, av_cli):
+            for a in (av_cl, av_trt, av_turma, av_exec, av_pct, av_cli, av_nasc, av_valor):
                 self.anotar(a, "processos", pid, rec_copia or rec_proc,
                             origem_a="CÓPIA" if rec_copia else "PROCESSUAL", grupo="Jurídico")
             self.divergencias(pid, fc, fp, rec_copia)
             self.filhos_do_processo(pid, fc, fp, rec_copia or rec_proc, st_proc, incidente_situacao)
 
-    def situacao_execucao(self, fc, fp):
-        """PROCESSUAL vence (59 preenchidos só nela); a lista limpa é a da CÓPIA."""
+    def resultado_sentenca(self, fc, fp):
+        """(resultado de DECISAO SENTENCA, nota de SENTENCA, resultado FINAL).
+
+        ULTIMA DECISAO só completa o que ficou vazio — e só quando existe
+        sentença para completar (nota ou data). Fica num método só porque o
+        `conferir.py` recalcula a MESMA regra da origem: foi a prova real que
+        pegou um IMPROCEDENTE a mais no banco, vindo deste complemento.
+        """
+        v = lambda nome: self.valor(fc, fp, nome)                          # noqa: E731
+        obj, _ = N._traduz(N.DECISAO_OBJETIVA, v("DECISAO SENTENCA"), "resultado_objetivo")
+        nota, _ = N._traduz(N.NOTA, v("SENTENCA"), "nota")
+        final = obj
+        if not obj and (nota or campo(fc, "DATA SENTENCA")):
+            ud, _ = N._traduz(N.ULTIMA_DECISAO, v("ULTIMA DECISAO"), "resultado_objetivo")
+            if ud and ud[0] == "RESULTADO":
+                final = ud[1]
+        return obj, nota, final
+
+    def situacao_execucao(self, fc, fp, fase=None, tipo_audiencia=None):
+        """PROCESSUAL vence (59 preenchidos só nela); a lista limpa é a da CÓPIA.
+
+        Devolve (situacao, original, aviso, aplicado). O campo misturava estado
+        da execução com fase, resultado e evento: a carga real tem 198 processos
+        em que o valor estava na coluna errada. Onde ele é COERENTE com o que a
+        fase já disse (ARQUIVADO/EXTINTA em processo ENCERRADO; a mesma fase;
+        audiência de conciliação que existe), aplica-se ou nada há a fazer, e
+        `aplicado` diz o quê. Onde DISCORDA, abre conferência — guardar só no
+        `_original` e seguir seria escolher em silêncio. O `conferir.py`
+        recalcula esta mesma função da origem.
+        """
         bruto = campo(fp, "STATUS EXECUÇÃO") or campo(fc, "STATUS EXECUÇÃO")
         if not bruto:
-            return None, None, None
+            return None, None, None, None
         par, av = N._traduz(N.STATUS_EXECUCAO, bruto, "situacao_execucao")
         if par is None:
             return None, txt(bruto), (av or aviso(
                 "VALOR_SEM_TRADUCAO", "situacao_execucao", txt(bruto),
-                "opção poluída sem tradução: fica em branco, com o texto original guardado"))
+                "opção poluída sem tradução: fica em branco, com o texto original guardado")), None
         destino, valor = par
-        return (valor if destino == "SIT" else None), txt(bruto), None
+        if destino == "SIT":
+            return valor, txt(bruto), None, None
+        if destino == "RESULTADO":
+            if fase == "ENCERRADO":
+                return None, txt(bruto), None, ("resultado_final", valor)
+            return None, txt(bruto), aviso(
+                "VALOR_SEM_TRADUCAO", "situacao_execucao", txt(bruto),
+                "STATUS EXECUÇÃO diz %s, mas a fase gravada é %s: não se aplica em silêncio"
+                % (valor, fase)), None
+        if destino == "FASE":
+            if fase == valor:
+                return None, txt(bruto), None, ("fase", valor)
+            return None, txt(bruto), aviso(
+                "VALOR_SEM_TRADUCAO", "situacao_execucao", txt(bruto),
+                "STATUS EXECUÇÃO diz fase %s, mas FASE PROCESSUAL e STATUS DO PROCESSO deram %s"
+                % (valor, fase)), None
+        # EVENTO: audiência de conciliação em execução, sem data neste campo
+        if tipo_audiencia == valor:
+            return None, txt(bruto), None, ("audiencia", valor)
+        return None, txt(bruto), aviso(
+            "VALOR_SEM_TRADUCAO", "situacao_execucao", txt(bruto),
+            "STATUS EXECUÇÃO registra audiência de conciliação em execução, sem data e sem "
+            "audiência correspondente no campo AUDIENCIA: não virou evento"), None
 
     def divergencias(self, pid, fc, fp, rec):
         """Onde a CÓPIA e a PROCESSUAL discordam em campo relevante. Ninguém
@@ -790,12 +857,11 @@ class Migracao:
                                                  data_hora=datahora_iso(v(nome_data))))
 
         # --- decisões: o resultado OBJETIVO e a NOTA são coisas diferentes
-        obj, _ = N._traduz(N.DECISAO_OBJETIVA, v("DECISAO SENTENCA"), "resultado_objetivo")
-        nota, _ = N._traduz(N.NOTA, v("SENTENCA"), "nota")
+        obj, nota, obj_final = self.resultado_sentenca(fc, fp)
         if obj or nota or campo(fc, "DATA SENTENCA"):
             self.bd.inserir("decisoes", dict(
                 processo_id=pid, tipo="SENTENCA", data=data_iso(campo(fc, "DATA SENTENCA")),
-                resultado_objetivo=obj, nota=nota, grau="PRIMEIRO",
+                resultado_objetivo=obj_final, nota=nota, grau="PRIMEIRO",
                 magistrado=txt(campo(fc, "MAGISTRADO")), orgao=txt(v("VARA"))))
         obj_rec, _ = N._traduz(N.RESULTADO_RECURSO, campo(fc, "RESULTADO RECURSO"), "resultado_objetivo")
         nota_ac, _ = N._traduz(N.NOTA, v("RESULTADO ACORDAO"), "nota")
@@ -810,13 +876,6 @@ class Migracao:
                     julgado_em=data_iso(v("DATA ACORDAO")), decisao_id=did,
                     relator=txt(campo(fc, "RELATOR")), orgao=txt(campo(fc, "TURMA")),
                     observacao="tipo do recurso não registrado na origem [CONFIRMAR 22]"))
-        # ULTIMA DECISAO só completa o que ficou vazio
-        ud, _ = N._traduz(N.ULTIMA_DECISAO, v("ULTIMA DECISAO"), "resultado_objetivo")
-        if ud and ud[0] == "RESULTADO" and not obj:
-            self.bd.executar("UPDATE decisoes SET resultado_objetivo=%s "
-                             "WHERE processo_id=%s AND tipo='SENTENCA' AND resultado_objetivo IS NULL",
-                             (ud[1], pid))
-
         # --- recurso pendente (o que o STATUS RECURSAL sabia dizer)
         st_rec, _ = N._traduz(N.STATUS_RECURSAL, v("STATUS RECURSAL"), "grau")
         if st_rec:
@@ -920,12 +979,14 @@ class Migracao:
 
     # ---------------------------------------------------------- 5. o pós
     def pos_processual(self):
-        """O PÓS não é entidade: é recebimento, repasse e arquivo do processo."""
-        por_cnj = {}
-        if not self.bd.arquivo:
-            for pid, cnj in self.bd.consultar(
-                    "SELECT id, numero_cnj_digitos FROM processos WHERE numero_cnj_digitos <> ''"):
-                por_cnj.setdefault(cnj, pid)
+        """O PÓS não é entidade: é recebimento, repasse e arquivo do processo.
+
+        O casamento por CNJ usa o mapa em MEMÓRIA (`processo_por_cnj`), não um
+        SELECT: em modo `--sql-saida` não há banco para perguntar, e o SQL
+        gerado tem de produzir o MESMO banco que a carga direta — senão o plano B
+        (subir por `apply_migration`) entregaria PÓS sem processo e faltantes
+        sem ligação, calado."""
+        por_cnj = self.processo_por_cnj
         for r in self._corta(ler("pos_processual")):
             f = r["fields"]
             pid = self.processo.get(um_link(f, "PROCESSUAL")) or por_cnj.get(self._cnj(f))
@@ -963,8 +1024,15 @@ class Migracao:
         for r in self._corta(ler("testemunhas")):
             f = r["fields"]
             nome = txt(campo(f, "NOME TESTEMUNHA"))
+            av_nome = None
             if not nome:
-                continue
+                # a carga real tem 2 registros sem nome (status, origem e um link
+                # com processo, mais nada). Pular seria perder linha — e o link.
+                # Entram com nome de aviso e conferência, para gente decidir.
+                nome = "(sem nome na origem)"
+                av_nome = aviso("VALOR_SEM_TRADUCAO", "nome", "(vazio)",
+                                "registro de TESTEMUNHAS sem NOME TESTEMUNHA: entrou para não "
+                                "perder o vínculo e o status; confira se é lixo ou cadastro incompleto")
             vinc, av_v = N._traduz(N.VINCULO, campo(f, "VINCULO"), "vinculo")
             sit, av_s = N._traduz(N.STATUS_TESTEMUNHA, campo(f, "STATUS TESTEMUNHA"), "situacao")
             cob, _ = N._traduz(N.COBRANCA, campo(f, "COBRANÇA"), "cobrancas")
@@ -988,7 +1056,7 @@ class Migracao:
                 origem_registro_id=txt(campo(f, "origem_comercial_registro_id")),
                 airtable_record_id=r["id"], airtable_tabela="TESTEMUNHAS", airtable_bruto=f))
             self.testemunha[r["id"]] = tid
-            for a in (av_v, av_s):
+            for a in (av_nome, av_v, av_s):
                 self.anotar(a, "testemunhas", tid, r["id"], origem_a="TESTEMUNHAS")
             for rec_p in link(f, "TESTEMUNHA DE:"):
                 if self.processo.get(rec_p):
@@ -1035,18 +1103,16 @@ class Migracao:
 
     # ---------------------------------------------------------- 7. os faltantes
     def faltantes(self):
-        por_cnj = {}
-        if not self.bd.arquivo:
-            for pid, cnj in self.bd.consultar(
-                    "SELECT id, numero_cnj_digitos FROM processos WHERE numero_cnj_digitos <> ''"):
-                por_cnj.setdefault(cnj, pid)
+        por_cnj = self.processo_por_cnj            # em memória: ver pos_processual()
         for r in self._corta(ler("faltantes")):
             f = r["fields"]
-            self.bd.inserir("conferencia_faltantes", dict(
+            # a carga real achou aqui um número de processo digitado como VALOR
+            valor, av_valor = N.dinheiro(campo(f, "VALOR"), "valor_causa_centavos")
+            fid = self.bd.inserir("conferencia_faltantes", dict(
                 nome=txt(campo(f, "NOME")), numero_cnj=txt(campo(f, "Nº PROCESSO")),
                 empresa_id=self.empresa.get(um_link(f, "EMPRESA")),
                 processo_id=por_cnj.get(self._cnj(f)),
-                valor_causa_centavos=centavos(campo(f, "VALOR")),
+                valor_causa_centavos=valor,
                 trt=txt(campo(f, "TRT")), vara=txt(campo(f, "VARA")),
                 distribuicao_em=data_iso(campo(f, "DISTRIBUIÇÃO")),
                 fase_recomendada=txt(campo(f, "FASE RECOMENDADA (DATAJUD)")),
@@ -1057,6 +1123,8 @@ class Migracao:
                 observacoes=txt(campo(f, "OBSERVAÇÕES")),
                 airtable_record_id=r["id"], airtable_tabela="Conferência de Faltantes",
                 airtable_bruto=f))
+            self.anotar(av_valor, "conferencia_faltantes", fid, r["id"],
+                        origem_a="Conferência de Faltantes", grupo="Jurídico")
 
     # ---------------------------------------------------------- 8. o fecho
     def historico(self):
@@ -1095,6 +1163,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--baixar", action="store_true", help="Airtable → dados/*.json (só GET)")
+    p.add_argument("--do-conector", action="store_true",
+                   help="converte os JSON do conector MCP (--origem) para dados/*.json; ver do_conector.py")
+    p.add_argument("--origem", help="pasta com os JSON do conector e o nomes.tsv (com --do-conector)")
     p.add_argument("--recriar", action="store_true", help="apaga o public e refaz do esquema")
     p.add_argument("--amostra", type=int, help="N registros por tabela, para provar o caminho")
     p.add_argument("--sql-saida", help="não conecta: escreve o SQL da carga neste arquivo")
@@ -1103,6 +1174,11 @@ def main():
 
     if a.baixar:
         return baixar()
+    if a.do_conector:
+        if not a.origem:
+            sys.exit("--do-conector exige --origem PASTA")
+        import do_conector
+        return do_conector.converter(a.origem)
 
     dsn = a.dsn or segredo("GGV_SUPABASE_TRAB")
     if not dsn and not a.sql_saida:

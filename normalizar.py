@@ -57,8 +57,17 @@ def cpf_valido(c):
     return True
 
 
+# Acima disto não é dinheiro: a carga real achou, em Conferência de Faltantes, um
+# VALOR de vinte dígitos — um número de processo digitado no campo de moeda. Em
+# centavos ele estoura o bigint e derruba a carga inteira. Nenhuma causa
+# trabalhista vale um bilhão de reais; o que passa daqui fica NULL, o original
+# segue no `airtable_bruto`, e `dinheiro()` abre a conferência.
+LIMITE_REAIS = 1_000_000_000
+
+
 def centavos(v):
-    """R$ para inteiro. Dinheiro em float perde centavo e ninguém acha depois."""
+    """R$ para inteiro. Dinheiro em float perde centavo e ninguém acha depois.
+    Acima de `LIMITE_REAIS` devolve None — ver `dinheiro()` para o aviso."""
     if v in (None, ""):
         return None
     if isinstance(v, str):
@@ -66,9 +75,26 @@ def centavos(v):
         if not v:
             return None
     try:
-        return int(round(float(v) * 100))
+        f = float(v)
     except (TypeError, ValueError):
         return None
+    if abs(f) > LIMITE_REAIS:
+        return None
+    return int(round(f * 100))
+
+
+def dinheiro(v, campo="valor_centavos"):
+    """`centavos()` com o aviso: (centavos, aviso). Use onde o valor vem de campo
+    que gente digita — o campo de moeda recebe número de processo, e isso tem
+    de virar conferência, não NULL calado."""
+    if v in (None, ""):
+        return None, None
+    c = centavos(v)
+    if c is None:
+        return None, aviso("VALOR_SEM_TRADUCAO", campo, str(v)[:60],
+                           "não é valor em reais: passa de R$ 1 bilhão ou não é número — "
+                           "parece número de processo digitado no campo de valor")
+    return c, None
 
 
 def data_iso(v):
@@ -253,14 +279,23 @@ FONTE = {
 # específico para o mais geral — a ordem importa: "SEM JUSTA CAUSA" tem de ser
 # testado antes de "JUSTA CAUSA".
 RESCISAO_TRECHOS = [
-    (("RESCISAO INDIRET", "RECISAO INDIRET", "RESCISÃO INDIRET", "R.I", "RI "), "RESCISAO_INDIRETA"),
+    # os trechos são comparados com o texto JÁ normalizado (sem acento): trecho
+    # com acento nunca casa. "RESCISAO INDIRT" pega o "RESCISÃO INDIRTE" da base
+    # real e NÃO pega "INDIRETA" — por isso os dois estão escritos.
+    (("RESCISAO INDIRET", "RESCISAO INDIRT", "RECISAO INDIRET", "R.I", "RI "), "RESCISAO_INDIRETA"),
     (("SEM JUSTA CAUSA", "DEMISSAO SEM JUSTA", "DISPENSA SEM JUSTA"), "SEM_JUSTA_CAUSA"),
-    (("PEDIDO DE DEMISSAO", "PEDIU DEMISSAO", "PEDIDO DEMISSAO"), "PEDIDO_DEMISSAO"),
+    (("PEDIDO DE DEMISSAO", "PEDIU DEMISSAO", "PEDIDO DEMISSAO", "PEDI DEMISSAO", "PEDI CONTA"),
+     "PEDIDO_DEMISSAO"),
     (("JUSTA CAUSA",), "JUSTA_CAUSA"),
     (("ACORDO 484", "484-A", "484 A", "ACORDO DE DEMISSAO"), "ACORDO_484A"),
-    (("AINDA TRABALHA", "TRABALHANDO", "CONTRATO ATIVO", "EM ABERTO", "ATIVO NA EMPRESA"), "CONTRATO_VIVO"),
-    (("TERMINO DE CONTRATO", "FIM DE CONTRATO", "EXPERIENCIA", "PRAZO DETERMINADO"), "TERMINO_CONTRATO"),
+    (("AINDA TRABALHA", "TRABALHANDO", "CONTRATO ATIVO", "EM ABERTO", "ATIVO NA EMPRESA",
+      "AINDA NAO SAI"), "CONTRATO_VIVO"),
+    # "TERMINO D" cobre "TERMINO DE CONTRATO" e o "DEMISAO TERMINO D CONTRATO" da base real
+    (("TERMINO D", "FIM DE CONTRATO", "EXPERIENCIA", "PRAZO DETERMINADO"), "TERMINO_CONTRATO"),
 ]
+# O campo inteiro igual a uma destas palavras diz que o contrato continua:
+# casa só o texto EXATO, porque "ATIVO" como trecho pegaria o que não deve.
+RESCISAO_EXATO = {"ATIVO": "CONTRATO_VIVO", "ATUAL": "CONTRATO_VIVO"}
 
 
 def rescisao(v):
@@ -269,10 +304,12 @@ def rescisao(v):
     if not s:
         return None, None
     n = norm(s)
+    if n in RESCISAO_EXATO:
+        return RESCISAO_EXATO[n], None
     for trechos, destino in RESCISAO_TRECHOS:
         if any(t in n for t in trechos):
             return destino, None
-    if re.match(r"^[\d/\-.\s()+]+$", s):
+    if re.match(r"^[\d/\-.\s()+,]+$", s) or re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", s):
         return None, aviso("VALOR_SEM_TRADUCAO", "rescisao_modalidade", s,
                            "o campo traz data ou telefone, não modalidade de rescisão")
     return None, aviso("VALOR_SEM_TRADUCAO", "rescisao_modalidade", s,
@@ -581,7 +618,11 @@ TURMA_RX = re.compile(r"^(\d{1,2})\s*[ªa]?\s*TURMA$", re.I)
 CAMARA_RX = re.compile(r"^(\d{1,2})\s*[ªa]?\s*C[ÂA]MARA$", re.I)
 ORGAOS = ("VICE-PRESIDENCIA JUDICIAL", "PRESIDENCIA", "ANALISE DE RECURSOS",
           "ANALISE DE RECURSOS/VICE-PRESIDENCIA JUDICIAL",
-          "ORGAO ESPECIAL - ANALISE DE RECURSO")
+          "ORGAO ESPECIAL - ANALISE DE RECURSO", "SDI")
+# A CÓPIA guarda TURMA como texto e a duplicação da tabela cortou o nome do
+# órgão em 24 caracteres: 270 registros dizem "VICE-PRESIDÊNCIA JUDICIA". Só um
+# órgão começa assim, então a leitura é inequívoca — não é semelhança, é prefixo.
+ORGAOS_TRUNCADOS = {"VICE-PRESIDENCIA JUDICIA": "VICE-PRESIDENCIA JUDICIAL"}
 
 
 def turma(v):
@@ -600,9 +641,10 @@ def turma(v):
     m = CAMARA_RX.match(s)
     if m:
         return "%dª CÂMARA" % int(m.group(1)), None
-    if norm(s) in ORGAOS:
-        return norm(s).replace("ORGAO", "ÓRGÃO").replace("ANALISE", "ANÁLISE") \
-                      .replace("PRESIDENCIA", "PRESIDÊNCIA"), None
+    n = ORGAOS_TRUNCADOS.get(norm(s), norm(s))
+    if n in ORGAOS:
+        return n.replace("ORGAO", "ÓRGÃO").replace("ANALISE", "ANÁLISE") \
+                .replace("PRESIDENCIA", "PRESIDÊNCIA"), None
     if len(so_digitos(s) or "") >= 15:
         return None, aviso("VALOR_SEM_TRADUCAO", "turma", "(número de processo digitado como turma)",
                            "o campo TURMA recebeu um número de processo")

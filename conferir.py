@@ -104,8 +104,11 @@ class Prova:
                     self.q("SELECT COUNT(*) FROM processos WHERE cliente_id IS NULL"))
 
         tes = self.corta(ler("testemunhas"))
-        self.checar("testemunhas", sum(1 for r in tes if txt(campo(r["fields"], "NOME TESTEMUNHA"))),
-                    self.q("SELECT COUNT(*) FROM testemunhas"))
+        # TODAS entram, inclusive as sem nome (a carga real tem 2): pular seria perder linha
+        self.checar("testemunhas", len(tes), self.q("SELECT COUNT(*) FROM testemunhas"))
+        self.checar("testemunhas sem nome → conferência aberta",
+                    sum(1 for r in tes if not txt(campo(r["fields"], "NOME TESTEMUNHA"))),
+                    self.q("SELECT COUNT(*) FROM conferencias WHERE entidade='testemunhas' AND campo='nome'"))
         self.checar("faltantes (lista de conferência)", len(self.corta(ler("faltantes"))),
                     self.q("SELECT COUNT(*) FROM conferencia_faltantes"))
         self.checar("log do formulário de testemunhas", len(self.corta(ler("auditoria_testemunhas"))),
@@ -175,6 +178,13 @@ class Prova:
             Prova._m = M.Migracao.__new__(M.Migracao)
         return Prova._m.fase_final(fc, fp)
 
+    def sit_exec(self, fc, fp):
+        """A MESMA regra de `migrar.Migracao.situacao_execucao`, com a fase e a
+        audiência que ela consulta — refeita da origem."""
+        par_aud, _ = N._traduz(N.AUDIENCIA, self.v(fc, fp, "AUDIENCIA"), "tipo")
+        return Prova._m.situacao_execucao(fc, fp, self.fase(fc, fp)[0],
+                                          par_aud[0] if par_aud else None)
+
     # ================================================================ por opção
     def opcoes(self):
         self.secao("CONTAGEM POR OPÇÃO DE SELECT")
@@ -205,6 +215,40 @@ class Prova:
         self.comparar("situação da testemunha", esperado,
                       self.dist("SELECT situacao, COUNT(*) FROM testemunhas GROUP BY 1"))
 
+        # a modalidade da rescisão e o canal: foi a falta destas duas linhas que
+        # deixou passar um trecho quebrado (90 rescisões indiretas viraram NULL)
+        esperado = Counter()
+        for r in pre:
+            m, _ = N.rescisao(campo(r["fields"], "RESCISAO"))
+            esperado[m or "(sem tradução)"] += 1 if campo(r["fields"], "RESCISAO") else 0
+        self.comparar("modalidade da rescisão", esperado,
+                      self.dist("SELECT COALESCE(rescisao_modalidade,'(sem tradução)'), COUNT(*) "
+                                "FROM clientes WHERE origem_cadastro='PRE_PROCESSUAL' "
+                                "AND rescisao_original IS NOT NULL GROUP BY 1"))
+        esperado = Counter()
+        for r in pre:
+            par, _ = N._traduz(N.FONTE, campo(r["fields"], "FONTE"), "canal")
+            if par:
+                esperado["%s/%s" % (par[0], par[1] or "-")] += 1
+        self.comparar("canal/campanha do lead", esperado,
+                      self.dist("SELECT canal||'/'||COALESCE(campanha,'-'), COUNT(*) FROM clientes "
+                                "WHERE canal IS NOT NULL GROUP BY 1"))
+        esperado = Counter()
+        for r in pre:
+            for p in (campo(r["fields"], "PENDENCIAS") or []):
+                if N.DOCUMENTO.get(p):
+                    esperado[N.DOCUMENTO[p]] += 1
+        self.comparar("documento pendente", esperado,
+                      self.dist("SELECT documento_tipo, COUNT(*) FROM pendencias GROUP BY 1"))
+        esperado = Counter()
+        vivos_ = [(fc, fp) for fc, fp in self.pares() if self.fase(fc, fp)[0]]
+        for fc, fp in vivos_:
+            t, _ = N.turma(self.v(fc, fp, "TURMA"))
+            if t:
+                esperado[t] += 1
+        self.comparar("turma/órgão", esperado,
+                      self.dist("SELECT turma, COUNT(*) FROM processos WHERE turma IS NOT NULL GROUP BY 1"))
+
         esperado = Counter()
         for r in pre:
             f = r["fields"]
@@ -225,7 +269,7 @@ class Prova:
 
         esperado = Counter()
         for fc, fp in vivos:
-            s, _, _ = Prova._m.situacao_execucao(fc, fp)
+            s = self.sit_exec(fc, fp)[0]
             if s:
                 esperado[s] += 1
         self.comparar("situação da execução", esperado,
@@ -242,7 +286,7 @@ class Prova:
 
         esperado = Counter()
         for fc, fp in vivos:
-            o, _ = N._traduz(N.DECISAO_OBJETIVA, self.v(fc, fp, "DECISAO SENTENCA"), "r")
+            o = Prova._m.resultado_sentenca(fc, fp)[2]     # inclui o complemento de ULTIMA DECISAO
             if o:
                 esperado[o] += 1
         self.comparar("resultado da sentença", esperado,
@@ -344,6 +388,15 @@ class Prova:
         self.checar("valor da causa nos faltantes",
                     sum(dinheiro(campo(r["fields"], "VALOR")) for r in self.corta(ler("faltantes"))),
                     self.q("SELECT COALESCE(SUM(valor_causa_centavos),0) FROM conferencia_faltantes"))
+        # o que não é dinheiro (número de processo no campo de valor) não some
+        # calado: fica NULL, o original no bruto, e UMA conferência por ocorrência
+        vivos = [(fc, fp) for fc, fp in self.pares() if self.fase(fc, fp)[0]]
+        implausiveis = sum(1 for r in self.corta(ler("faltantes"))
+                           if N.dinheiro(campo(r["fields"], "VALOR"))[1]) \
+            + sum(1 for fc, fp in vivos if N.dinheiro(self.v(fc, fp, "VALOR"))[1])
+        self.checar("valor implausível → conferência aberta", implausiveis,
+                    self.q("SELECT COUNT(*) FROM conferencias WHERE tipo='VALOR_SEM_TRADUCAO' "
+                           "AND campo='valor_causa_centavos'"))
 
     # ================================================================ os links
     def carregados(self, arquivo):
@@ -454,11 +507,26 @@ class Prova:
             "SELECT COUNT(*) FROM pg_tables t JOIN pg_class c ON c.relname=t.tablename "
             "WHERE t.schemaname='public' AND c.relnamespace='public'::regnamespace "
             "AND NOT c.relrowsecurity"))
-        self.checar("valor poluído sem conferência aberta",
-                    0 if self.q("SELECT COUNT(*) FROM processos WHERE situacao_execucao IS NULL "
-                                "AND situacao_execucao_original IS NOT NULL") ==
+        # STATUS EXECUÇÃO poluído ou na coluna errada: cada ocorrência ou virou
+        # conferência ou foi aplicada onde era coerente — nunca ficou só no _original
+        vivos = [(fc, fp) for fc, fp in self.pares() if self.fase(fc, fp)[0]]
+        avisos = aplicados = extintas = 0
+        for fc, fp in vivos:
+            s, orig, av, apl = self.sit_exec(fc, fp)
+            if av:
+                avisos += 1
+            if apl:
+                aplicados += 1
+                if apl == ("resultado_final", "EXTINTA_SEM_RESOLUCAO") and not self.fase(fc, fp)[1]:
+                    extintas += 1
+        self.checar("STATUS EXECUÇÃO sem tradução → conferência", avisos,
                     self.q("SELECT COUNT(*) FROM conferencias WHERE tipo='VALOR_SEM_TRADUCAO' "
-                           "AND campo='situacao_execucao'") else 1, 0)
+                           "AND campo='situacao_execucao'"))
+        self.checar("STATUS EXECUÇÃO na coluna errada: conferido ou aplicado", avisos + aplicados,
+                    self.q("SELECT COUNT(*) FROM processos WHERE situacao_execucao IS NULL "
+                           "AND situacao_execucao_original IS NOT NULL"))
+        self.checar("  … dos quais EXTINTA virou resultado_final", extintas,
+                    self.q("SELECT COUNT(*) FROM processos WHERE resultado_final='EXTINTA_SEM_RESOLUCAO'"))
 
     # ================================================================ o retrato
     def retrato(self):
