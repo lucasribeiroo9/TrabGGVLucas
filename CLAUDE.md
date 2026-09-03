@@ -9,10 +9,13 @@ em nada da Mapech — o previdenciário deles virou o oficial e nosso trabalho l
 
 - **Fonte de hoje**: base Airtable **BASE GGV - TRAB V3** (`appMFTjWGygZ4ob5T`), lida como
   colaborador somente leitura. Airtable é **somente leitura**, sempre — o escritório trabalha nela.
-- **Banco de destino**: o projeto Supabase **PrevGGVLucas** (`yzayjwlgjjnoxdxgruss`, sa-east-1)
-  será **reaproveitado** para o trabalhista, para não contratar outro. Antes de tocar nele:
-  backup completo do Prev (dump + `carregar_supabase.py --baixar` no Mac), guardado fora do git.
-  Depois, renomear para TrabGGVLucas. RLS ligada desde a primeira migration.
+- **Banco de destino**: o projeto Supabase **PrevGGVLucas** (`yzayjwlgjjnoxdxgruss`, sa-east-1),
+  reaproveitado para o trabalhista. **Feito em 03/09/2026**: o `public` do Prev foi renomeado para
+  `prev_2026_09` (69 tabelas, 123.264 linhas, 36 funções, 12 gatilhos, `pg_trgm`), conferido
+  antes e depois, fora da API e sem acesso para `anon`/`authenticated`. O trabalhista nasce num
+  `public` vazio. **Não tocar em `prev_2026_09`** nem no esquema `juridico` (extensão `vector`,
+  origem a confirmar com o Lucas). Cópia externa (pg_dump) ainda a fazer no Mac. RLS ligada desde
+  a primeira migration.
 - **Repositório**: este, `lucasribeiroo9/TrabGGVLucas`, separado do Prev.
 - **Governança**: quatro máquinas de estado, como no Prev — cliente (pré-processual), caso,
   processo (conhecimento → recursal → execução) e etapas judiciais (audiência, prazo) — desenhadas a
