@@ -254,12 +254,19 @@ CREATE TABLE pendencias (
     id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     cliente_id        BIGINT REFERENCES clientes(id) ON DELETE CASCADE,
     processo_id       BIGINT,                          -- FK ligada depois de processos
+    -- CADASTRO: um dado da ficha que a origem não tinha (data de nascimento da
+    -- ficha criada dos autos, por exemplo). Não trava etapa; é o que falta
+    -- preencher, com dono — e não uma conferência genérica.
     tipo              TEXT NOT NULL CHECK (tipo IN (
-                        'DOCUMENTO','ENTREVISTA','PETICAO','REUNIAO_PRE_AUDIENCIA','REPLICA','OUTRO')),
+                        'DOCUMENTO','ENTREVISTA','PETICAO','REUNIAO_PRE_AUDIENCIA','REPLICA',
+                        'CADASTRO','OUTRO')),
     -- quando tipo=DOCUMENTO: qual documento. Lista fechada porque é a lista
     -- que o gate lê; HOLERITE e HOLERITES eram a mesma coisa na origem.
+    -- CONTRATO: a ficha existe e não há data de assinatura — o contrato de
+    -- honorários não está registrado.
     documento_tipo    TEXT CHECK (documento_tipo IS NULL OR documento_tipo IN (
-                        'CNH_RG','CTPS','TRCT','DOCS_MEDICOS','PROVAS','FGTS','HOLERITES','PIS','OUTRO')),
+                        'CNH_RG','CTPS','TRCT','DOCS_MEDICOS','PROVAS','FGTS','HOLERITES','PIS',
+                        'CONTRATO','OUTRO')),
     descricao         TEXT,
     obrigatorio       BOOLEAN NOT NULL DEFAULT true,
     responsavel_id    BIGINT REFERENCES pessoas(id) ON DELETE SET NULL,
@@ -375,10 +382,17 @@ CREATE TABLE processos (
                         'DESISTENCIA','SEM_RECEBIMENTO','REDISTRIBUIDO','OUTRO')),
     resultado_texto   TEXT,                            -- o campo RESULTADO, em prosa
     encerrado_em      TEXT,
-    arquivado_em      TEXT,                            -- arquivo físico/Drive, não é fase
+    -- O arquivo físico/Drive não é fase. A origem (PÓS, STATUS ARQUIVAMENTO)
+    -- diz SE a pasta foi arquivada e não diz QUANDO: o fato fica no booleano
+    -- e a data só entra quando alguém a registrar — a carga não a inventa.
+    arquivado         BOOLEAN,
+    arquivado_em      TEXT,
 
     sucumbencia_percent NUMERIC(6,2),                  -- art. 791-A CLT: 5 a 15%
-    credito_cedido_em TEXT,                            -- o cliente vendeu o crédito
+    -- O cliente vendeu o crédito. STATUS PAGAMENTO = CESSAO DE CREDITOS diz o
+    -- fato; a data e o cessionário a origem não tem, e ficam vazios.
+    credito_cedido    BOOLEAN NOT NULL DEFAULT false,
+    credito_cedido_em TEXT,
     cessionario       TEXT,
 
     -- Sentido 1 da REVOGAÇÃO: NÓS juntamos a revogação do patrono anterior
@@ -950,7 +964,7 @@ CREATE TABLE conferencias (
     tipo              TEXT NOT NULL CHECK (tipo IN (
                         'DIVERGENCIA_FONTE','VALOR_SEM_TRADUCAO','CNJ_DUPLICADO','SEM_NUMERO',
                         'CLIENTE_AMBIGUO','CLIENTE_SEM_PAR','EMPRESA_AMBIGUA','LINK_QUEBRADO',
-                        'FORA_DO_ESCOPO','DATA_ILEGIVEL','OUTRO')),
+                        'FORA_DO_ESCOPO','DATA_ILEGIVEL','AUDIENCIA_SEM_RESULTADO','OUTRO')),
     entidade          TEXT NOT NULL,                      -- 'processos', 'clientes', ...
     entidade_id       BIGINT,                             -- pode ser NULL: a linha nem entrou
     campo             TEXT,

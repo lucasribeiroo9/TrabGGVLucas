@@ -92,7 +92,7 @@ O funil. Vira `clientes` (fluxo 1).
 | TESE PRINCIPAL | `fldc9EKTY8zh1Zjmg` | singleLineText | airtable_bruto | vazio em 100% dos 797. Não vira coluna: campo que ninguém preencheu não ganha lugar na tela | — |
 | PROCESSUAL | `fldyG90IE0htBpVEo` | multipleRecordLinks | processos.cliente_id | link -> a ligação passa a viver na FK do processo | — |
 | TESTEMUNHAS | `fldDh5FCEddcsnBf1` | multipleRecordLinks | testemunha_vinculos.cliente_id | link -> tabela de ligação | — |
-| Created | `fldyBsUVlqH0ulTnE` | createdTime | clientes.criado_em | createdTime -> TEXT ISO | — |
+| Created | `fldyBsUVlqH0ulTnE` | createdTime | clientes.criado_em (+ historico_etapas.em como último recurso) | createdTime -> TEXT ISO. É a data do histórico quando a etapa não tem data própria (ver "O histórico da carga") | — |
 | PERICIA MEDICA | `fldRofbAsutD06eAB` | checkbox | clientes.pericia_medica | checkbox -> boolean (0 marcados hoje) | — |
 | PERICIA INSALUB/PERIC | `fldzDiAk4UZpiKLy5` | checkbox | clientes.pericia_tecnica | checkbox -> boolean (0 marcados hoje) | — |
 | ENVIAR MENSAGEM | `fldSHOr0gls9z5rUn` | button | descartado | botao: monta uma URL a partir dos outros campos. Não e dado | — |
@@ -114,36 +114,36 @@ A fonte do que está **vivo**: os 22 números recentes, os 106 sem número, os l
 | NOME | `fldNfuluuw5gCEHr4` | singleLineText | processos.nome_parte (+ clientes.nome) | CÓPIA vence; a outra grafia vai para processo_alias | CÓPIA |
 | Nº PROCESSO | `fld6Ij9BXuOr9PSYg` | singleLineText | processos.numero_cnj | texto; numero_cnj_digitos é coluna gerada. É a CHAVE do casamento CÓPIA × PROCESSUAL. Duplicado -> conferências CNJ_DUPLICADO; vazio (106) -> SEM_NUMERO | CÓPIA |
 | EMPRESA | `fldrknqdvK5yrinq8` | multipleRecordLinks | processos.empresa_id | link -> FK empresas(id) | CÓPIA |
-| COMPLEXIDADE | `fld2Vbn86hkcHjRZU` | singleSelect | processos.complexidade | A/B/C; derivada do valor (C<=150k, B<=500k). Diferença da faixa -> complexidade_manual=true [CONFIRMAR 16] | CÓPIA |
+| COMPLEXIDADE | `fld2Vbn86hkcHjRZU` | singleSelect | processos.complexidade | A/B/C; derivada do valor (normalizar.complexidade_da_faixa: C<=150k, B<=500k). Letra diferente da faixa -> complexidade_manual=true — aplicado e provado (carga real: 0 casos, todas na faixa) [CONFIRMAR 16] | CÓPIA |
 | VALOR | `fld4ixpIddlOdip3a` | currency | processos.valor_causa_centavos | normalizar.dinheiro(): currency -> centavos; acima de R$ 1 bilhão não é dinheiro (é número de processo digitado no campo de moeda) -> NULL + conferência, original no bruto. Carga real: 0 casos aqui | CÓPIA |
 | ADVOGADO | `fldgmBAFmw9vew8XV` | multipleRecordLinks | processos.advogado_id | link -> FK pessoas(id) | CÓPIA |
 | VARA | `fldB6EhDR53tG0bqT` | singleLineText | processos.vara | texto; CÓPIA vence, a outra grafia vai para processo_alias | CÓPIA |
 | TRT | `fldoc8fTWo0JH0b0T` | singleSelect | processos.trt | normalizar.TRT: 21 opções poluidas -> número (1..24). "85ª" e os vazios -> conferências | CÓPIA |
 | FASE PROCESSUAL | `fld0SuRbQk9jJa19n` | singleSelect | processos.fase | normalizar.FASE; EXECUÇÃO sem qualificação decidida por numero_cumprse/transito. As 1.403 divergências CÓPIA × PROCESSUAL -> conferências, uma por processo | CÓPIA |
-| STATUS DO PROCESSO | `fldqubv8Cbd8u9yPr` | singleSelect | processos.fase | incidentes | derivado | normalizar.STATUS_PROCESSO: AGUARDANDO_* são derivados; ROUBADO/RECEBIDO POR ELES/RECUPERADO viram incidentes; ARQUIVADO vira resultado_final; REDISTRIBUIR vira tarefa | CÓPIA |
+| STATUS DO PROCESSO | `fldqubv8Cbd8u9yPr` | singleSelect | processos.fase | incidentes | derivado | normalizar.STATUS_PROCESSO: AGUARDANDO_* são derivados; ROUBADO/RECEBIDO POR ELES/RECUPERADO viram incidentes; ARQUIVADO vira resultado_final; REDISTRIBUIR vira tarefa tipo REDISTRIBUICAO (1); TRÂNSITO EM JULGADO decide a fase da execução e vira ANOTAÇÃO — `transito_em` fica NULL porque a origem não tem a data (a da sentença não é ela); sem FASE PROCESSUAL e sem status -> CONHECIMENTO com conferência (58) | CÓPIA |
 | ENVIAR MENSAGEM | `fldV1cOA4tEfnjKPW` | button | descartado | botao | CÓPIA |
 | DISTRIBUIÇAO | `fldrcjw0h3MDTuaod` | date | processos.distribuicao_em | date -> TEXT ISO | CÓPIA |
-| STATUS CONHECIMENTO | `fldFI8DlSCAoPpjJO` | singleSelect | decisões | audiências | derivado | SENTENCIADA -> decisões(SENTENCA); AUSENCIA -> audiência NAO_REALIZADA com motivo AUSENCIA_RECLAMANTE + resultado_final ARQUIVADO_AUSENCIA; o resto e derivado | CÓPIA |
+| STATUS CONHECIMENTO | `fldFI8DlSCAoPpjJO` | singleSelect | decisões | audiências | derivado | SENTENCIADA -> decisões(SENTENCA); AUSENCIA -> audiência NAO_REALIZADA com motivo AUSENCIA_RECLAMANTE + resultado_final ARQUIVADO_AUSENCIA quando a fase é ENCERRADO e o resultado era ARQUIVADO ou vazio (126), senão conferência; SENTENCIADA / AGUARDANDO SENTENÇA também são EVIDÊNCIA de que a audiência passada aconteceu (ver DATA AUDIENCIA) | CÓPIA |
 | SENTENCA | `fldjHSryziAOOISbv` | singleSelect | decisões.nota (tipo=SENTENCA) | RUIM/MEDIA/OTIMA -> nota. E avaliação, não resultado | CÓPIA |
 | DECISAO SENTENCA | `fld2NZ9Zi35931gge` | singleSelect | decisões.resultado_objetivo (tipo=SENTENCA) | PROCEDENTE / PARCIALMENTE PROCEDENTE / IMPROCEDENTE / EXTINTO S/ RESOLUCAO | CÓPIA |
 | RESULTADO ACORDAO | `fldyhUJRHPLAsghKj` | singleSelect | decisões.nota (tipo=ACORDAO) | RUIM/MEDIO/OTIMO -> nota | CÓPIA |
 | ULTIMA DECISAO | `fld5XeIVLrec9DCu0` | singleSelect | decisões.resultado_objetivo da decisão mais recente | airtable_bruto | campo com duas naturezas. PROCEDENTE/IMPROCEDENTE completam a decisão quando DECISAO SENTENCA está vazio e existe sentença (nota ou data) — regra em `Migracao.resultado_sentenca()`, que o conferir.py recalcula (foi 1 IMPROCEDENTE a mais no banco que a denunciou); RUIM/MEDIA/OTIMA são a nota; SEM DECISAO não vira nada | CÓPIA |
 | DATA ACORDAO | `fldezorfyCie9kmB1` | date | decisões.data (tipo=ACORDAO) | date -> TEXT ISO. NAO confundir com DATA DO ACORDO (o acordo entre as partes) | CÓPIA |
 | CLASSIFICACAO | `fldwA5XRRCLLusZhu` | singleSelect | processos.rito + processos.classe_cnj + processos.classe_incidente | RT/AT = classe; ORDINÁRIO/SUMARÍSSIMO/SUMÁRIO = rito; as classes de incidente da CÓPIA (RR, AIRR, RRAg, Emb, EMBARGOS DE TERCEIRO, EXECUÇÃO *) vão para classe_incidente e para recursos [CONFIRMAR 17] | CÓPIA |
-| DATA AUDIENCIA | `fldYTqFftgpvtxHCb` | dateTime | audiências.data_hora + eventos | dateTime -> TEXT ISO. UMA LINHA por audiência: a origem sobrescrevia | CÓPIA |
+| DATA AUDIENCIA | `fldYTqFftgpvtxHCb` | dateTime | audiências.data_hora + eventos | dateTime -> TEXT ISO. UMA LINHA por audiência: a origem sobrescrevia. A SITUAÇÃO nasce pela evidência (Migracao.situacao_audiencia): ausência -> NAO_REALIZADA; sem data ou data >= leitura da origem -> DESIGNADA; data passada com sentença/acórdão/acordo/encerramento posterior, ou instrução encerrada, ou processo além do conhecimento -> REALIZADA com a evidência em `observacao`; data passada sem nada disso -> REALIZADA + conferência AUDIENCIA_SEM_RESULTADO (279). `historico_etapas.em` = a data da audiência | CÓPIA |
 | AUDIENCIA | `fldQgm6veivaP9A7v` | singleSelect | audiências.tipo + audiências.modalidade | normalizar.AUDIENCIA separa tipo de modalidade (INSTRUCAO/VIDEO -> INSTRUCAO + VIDEO). UNA-RS também grava processos.rito=SUMARÍSSIMO [CONFIRMAR 17] | CÓPIA |
 | Nº  CumPrSe | `fldC5VgP5KIXGqoDM` | singleLineText | processos.numero_cumprse | texto; é o gate numero_cumprse e decide EXECUÇÃO -> PROVISORIA | PROCESSUAL |
 | RESULTADO | `fldifEVxbZJJnrYRN` | multilineText | processos.resultado_texto | multiline; o resultado em prosa | CÓPIA |
 | STATUS RECURSAL | `fldfWIWmtbQX9n29c` | singleSelect | recursos (grau TRT/TST) | TST -> recurso pendente grau TST; AGUARDANDO JULGAMENTO -> grau TRT. O tipo do recurso [CONFIRMAR 22] nasce OUTRO quando a origem não diz | CÓPIA |
-| STATUS CumPrSe | `fldnjIz7be8iZqjqS` | singleSelect | processos.situacao_execucao | não é sub-máquina: 19 registros repetindo os estados da execução | CÓPIA |
-| STATUS DO CALCULO | `fldzNusdLtfqC2EhS` | singleSelect | processos.situacao_execucao + cálculos | PENDENTE/JUNTADO/HOMOLOGADO são a presença de três fatos em cálculos | CÓPIA |
+| STATUS CumPrSe | `fldnjIz7be8iZqjqS` | singleSelect | processos.situacao_execucao | normalizar.STATUS_CUMPRSE, aplicado em Migracao.completar_execucao: preenche situacao_execucao só onde STATUS EXECUÇÃO calou (12); discordância com STATUS EXECUÇÃO ou com a fase -> conferência DIVERGENCIA_FONTE (9). O texto vai para situacao_execucao_original | CÓPIA |
+| STATUS DO CALCULO | `fldzNusdLtfqC2EhS` | singleSelect | processos.situacao_execucao + cálculos | normalizar.STATUS_CALCULO -> situacao_execucao (AGUARDANDO_CALCULO / CALCULOS_APRESENTADOS / HOMOLOGADO) só onde STATUS EXECUÇÃO e CumPrSe calaram (471); em `calculos` fica `observacao` com o status — `homologado_em` fica NULL porque a origem NÃO tem a data (a carga anterior punha o ENCERRAMENTO: inventado) | CÓPIA |
 | CALCULO RCTE | `fldIoDBuntoHRD8M4` | currency | cálculos.valor_centavos (base=RECLAMANTE) | currency -> centavos | CÓPIA |
 | SUCUMB RCTE | `fldQwD6wl9Rp1OdvN` | currency | cálculos.sucumbencia_centavos (base=RECLAMANTE) | currency -> centavos | CÓPIA |
 | CALCULO RCDA | `fldBXmceSOIGmB6Qi` | currency | cálculos.valor_centavos (base=RECLAMADA) | currency -> centavos | CÓPIA |
 | SUCUMB RCDA | `fldzP9PLO36pB8GkB` | currency | cálculos.sucumbencia_centavos (base=RECLAMADA) | currency -> centavos | CÓPIA |
 | SUCUMB HOM | `fldn7DL7nwIB1wXCi` | currency | cálculos.sucumbencia_centavos (base=HOMOLOGADO) | currency -> centavos | CÓPIA |
 | VALOR HOM | `fldQwZD5A9GhAGG52` | currency | cálculos.valor_centavos (base=HOMOLOGADO) | currency -> centavos. PROCESSUAL vence: 127 preenchidos só nela | PROCESSUAL |
-| STATUS PAGAMENTO | `fldMJyeDxmi4D7qLI` | singleSelect | derivado de acordo_parcelas + recebimentos | seis rotulos para "quantas parcelas pagas e alguma atrasada". PARCELAMENTO CPC -> situacao_execucao; CESSAO DE CREDITOS -> credito_cedido_em | CÓPIA |
+| STATUS PAGAMENTO | `fldMJyeDxmi4D7qLI` | singleSelect | derivado de acordo_parcelas + recebimentos | seis rotulos para "quantas parcelas pagas e alguma atrasada" (derivados). PARCELAMENTO CPC -> situacao_execucao = PARCELAMENTO_916 onde vazio; CESSAO DE CREDITOS -> processos.credito_cedido = true (3) — `credito_cedido_em` e `cessionario` ficam NULL: a origem não os tem | CÓPIA |
 | ENCERRAMENTO | `fldrtiBvNP0bBmB7p` | date | processos.encerrado_em | date -> TEXT ISO | CÓPIA |
 | DRIVE | `fldHaNBnpjhyTvUzY` | url | processos.drive_url | url | CÓPIA |
 | ASTREA | `fldpc4dSNT3fuoQQS` | url | processos.astrea_url | url | CÓPIA |
@@ -161,33 +161,33 @@ A fonte do que está **vivo**: os 22 números recentes, os 106 sem número, os l
 | AND. NECESSÁRIO | `fldg1Bd6mkVrcTYQn` | singleSelect | tarefas (tipo=ANDAMENTO, texto_original) | "andamento necessário" é tarefa por definição. Encerrado/ACORDO são redundantes com a fase e não viram tarefa [CONFIRMAR 19] | PROCESSUAL |
 | AÇÃO | `fldMGJEtU1xwQgN44` | date | processos.ajuizamento_em | date -> TEXT ISO [CONFIRMAR: difere de DISTRIBUICAO em que?] | CÓPIA |
 | TEL VARA | `fldawy6eAxOG7SOAk` | phoneNumber | processos.tel_vara | telefone | CÓPIA |
-| STATUS ACORDO | `fldXIXmprptmmddgZ` | singleSelect | acordos.situação | EM ANDAMENTO / CUMPRIDO / QUEBRA -> situação do acordo; QUEBRA também grava quebrado_em | CÓPIA |
+| STATUS ACORDO | `fldXIXmprptmmddgZ` | singleSelect | acordos.situação | EM ANDAMENTO / CUMPRIDO / QUEBRA -> acordos.situacao; `quebrado_em` fica NULL — a origem só tem o status, não a data da quebra. Acordo com VALOR ou DATA e sem status nasce EM_ANDAMENTO com conferência (9) | CÓPIA |
 | VALOR ACORDO | `fld3QiKc0ZWvhGOAY` | currency | acordos.valor_centavos | currency -> centavos | CÓPIA |
 | TOTAL RECEBIDO | `fld5ozVpHgQkmILn6` | currency | recebimentos.valor_centavos (base=TOTAL) | currency -> centavos | CÓPIA |
 | SUCUMB RECEBIDO | `fldPo7TA7Vf1sGDle` | currency | recebimentos.valor_centavos (base=SUCUMBENCIA) | currency -> centavos. PROCESSUAL vence: 67 só nela | PROCESSUAL |
 | HONOR TOTAL | `fldHre22MxIFJBkst` | currency | recebimentos.valor_centavos (base=HONORARIOS) | currency -> centavos | CÓPIA |
-| SITU. EMPRESA | `fldKg8pjqh6Xx93f6` | multipleLookupValues | empresas.situação | lookup: o atributo e da empresa. Divergencia com EMPRESAS -> conferências | PROCESSUAL |
+| SITU. EMPRESA | `fldKg8pjqh6Xx93f6` | multipleLookupValues | empresas.situação | lookup: o atributo e da empresa (JOIN). A divergência de verdade é do LINK: 423 processos apontam para reclamadas diferentes na CÓPIA e na PROCESSUAL -> conferência DIVERGENCIA_FONTE campo EMPRESA, com o nome de cada lado; o lookup só vira conferência própria quando o link é o mesmo e ainda discorda do cadastro (14) | PROCESSUAL |
 | BENS IDENTIFICADOS | `fldfNjKnnKr11GGcL` | multipleSelects | empresas.bens_identificados | atributo da empresa, estava nos dois lugares | CÓPIA |
 | HIST. PAGAMENTO | `fldRa9KGSydy8BCmD` | multipleSelects | empresas.hist_pagamento | idem | CÓPIA |
 | ULTIMA MOV | `fldvOXdS10SVyA10U` | singleLineText | processos.ultima_movimentacao + ultima_movimentacao_em | texto "aaaa-mm-dd - descrição": a data é separada do texto | CÓPIA |
-| REVOGAÇÃO | `fldWEiwaScW2AZjlC` | singleSelect | processos.revogou_patrono_anterior | incidentes.revogacao_nos_autos_em | tarefas | normalizar.REVOGACAO. O SENTIDO depende do STATUS DO PROCESSO: em processo ROUBADO e o cliente que nos revogou (incidente); nos demais somos nos que juntamos a revogação do patrono anterior [CONFIRMAR 20]. Os 9 recados viram tarefa com o texto inteiro | PROCESSUAL |
-| DATA REVOG | `fldmQNnSSPgwmjrfU` | date | processos.revogacao_em | incidentes.revogacao_nos_autos_em | date -> TEXT ISO. PROCESSUAL vence: 509 preenchidos só nela | PROCESSUAL |
-| NOTIFICAÇÃO | `fldIX6EOFBawzAWUK` | singleSelect | incidentes.situação + as datas da notificação | REDIGIDA -> DETECTADO + notificacao_redigida_em; ENVIADA -> NOTIFICADO; RECEBIDA/RESPONDIDA são datas | PROCESSUAL |
+| REVOGAÇÃO | `fldWEiwaScW2AZjlC` | singleSelect | processos.revogou_patrono_anterior | incidentes.revogacao_nos_autos_em | tarefas | normalizar.REVOGACAO + Migracao.revogacao_destino. O SENTIDO depende do STATUS DO PROCESSO: ROUBADO/RECEBIDO POR ELES/RECUPERADO (ou REVOGAÇÃO = ROUBADO) e o cliente que nos revogou (incidente); em qualquer outro caso somos nos que juntamos a revogação do patrono anterior -> revogou_patrono_anterior SIM/NÃO (794/66), haja ou não incidente por notificação/providência [CONFIRMAR 20]. Os recados viram tarefa (5). Provado em conferir.py | PROCESSUAL |
+| DATA REVOG | `fldmQNnSSPgwmjrfU` | date | processos.revogacao_em | incidentes.revogacao_nos_autos_em | date -> TEXT ISO. PROCESSUAL vence. A data NUNCA fica sem coluna: sentido 2 -> incidentes.revogacao_nos_autos_em (101); qualquer outro caso, com REVOGAÇÃO preenchida ou não -> processos.revogacao_em (1.326). REVOGAÇÃO = NÃO com data é contradição: grava-se e abre conferência (79). conferir.py prova 1.427 = 1.326 + 101 | PROCESSUAL |
+| NOTIFICAÇÃO | `fldIX6EOFBawzAWUK` | singleSelect | incidentes.situação + as datas da notificação | REDIGIDA -> DETECTADO; ENVIADA/RECEBIDA/RESPONDIDA -> NOTIFICADO. As DATAS (redigida, enviada, recebida, resposta) ficam NULL: a origem não as tem, e a carga anterior punha DATA REVOG ou ENCERRAMENTO nelas (72 inventadas). O valor original vai para incidentes.airtable_bruto | PROCESSUAL |
 | PROVIDENCIAS | `fld0Do0Zk6nGI8kNO` | singleLineText | incidentes.providencia_texto + tarefas | NOTIFICAR -> tarefa "enviar notificação"; TRAVAR O RECEBIMENTO -> tarefa "pedir reserva de honorários (EOAB art. 22 §4º)" | PROCESSUAL |
 | SUCUMBÊNCIA % | `fldVloHxj2m98LYxt` | singleLineText | processos.sucumbencia_percent | texto "5%" -> número. O "2500%" é erro: vai para conferências | CÓPIA |
-| CLIENTE AVISADO? | `fldgSW5GHxJI2c8Y5` | checkbox | incidentes.cliente_avisado_em | checkbox -> data (a data do registro, quando não há outra) [CONFIRMAR] | PROCESSUAL |
+| CLIENTE AVISADO? | `fldgSW5GHxJI2c8Y5` | checkbox | incidentes.cliente_avisado_em | checkbox -> incidentes.airtable_bruto. `cliente_avisado_em` fica NULL: a origem não tem a data (0 usos hoje) [CONFIRMAR] | PROCESSUAL |
 | CAPTADOR | `fldn2UE1d7hIltlEL` | multipleRecordLinks | processos.captador_id | link -> FK pessoas(id) | CÓPIA |
-| TELEFONE | `fldM8NaPLZgRl8xYO` | singleLineText | processos.telefone_parte (+ clientes.telefone) | CÓPIA vence; a outra grafia vai para processo_alias | CÓPIA |
-| ASSINATURA | `fldfX0YrunL0RcS8B` | date | processos.assinatura_em (+ clientes.data_assinatura_contrato) | date -> TEXT ISO. CÓPIA vence: 58% contra 4% | CÓPIA |
+| TELEFONE | `fldM8NaPLZgRl8xYO` | singleLineText | processos.telefone_parte (+ clientes.telefone na ficha criada dos autos) | CÓPIA vence; a outra grafia vai para processo_alias | CÓPIA |
+| ASSINATURA | `fldfX0YrunL0RcS8B` | date | processos.assinatura_em (+ clientes.data_assinatura_contrato) | date -> TEXT ISO. CÓPIA vence: 58% contra 4%. Completa a ficha do cliente onde ela não tinha (ficha criada dos autos ou PRÉ sem DATA DE ASSINATURA); ficha que continua sem -> pendência DOCUMENTO/CONTRATO obrigatória (1.283) | CÓPIA |
 | status_disparo | `fld7ybzbPpxSUuz7S` | singleLineText | automacao_log (origem N8N) | idem PRE | CÓPIA |
 | tipo_disparo | `fldilA0CkqowpHrwU` | singleLineText | automacao_log.detalhe | idem | CÓPIA |
 | data_solicitacao_disparo | `flddnHA8qxPagMTVL` | singleLineText | automacao_log.em | idem | CÓPIA |
 | responsavel_interno | `fldpy6hzz9JmvGF52` | singleLineText | automacao_log.detalhe | idem | CÓPIA |
 | solicitante_disparo | `fldngD5lXI6tVGcSq` | singleLineText | automacao_log.detalhe | idem | CÓPIA |
-| Created By | `fldt1iwzwXFOe7Eiz` | lastModifiedTime | processos.atualizado_em (PROCESSUAL) | processos.airtable_bruto (CÓPIA) | na PROCESSUAL o tipo é lastModifiedTime apesar do nome; na CÓPIA é createdBy de verdade e o nome de quem criou fica no bruto | CÓPIA |
+| Created By | `fldt1iwzwXFOe7Eiz` | lastModifiedTime | processos.atualizado_em (PROCESSUAL) | processos.airtable_bruto (CÓPIA) | na PROCESSUAL o tipo é lastModifiedTime apesar do nome e vai para processos.atualizado_em (2.652); na CÓPIA é createdBy de verdade e o nome de quem criou fica no bruto. O createdTime do record vai para processos.criado_em / clientes.criado_em da ficha dos autos, e é o último recurso do histórico | CÓPIA |
 | DATA PERÍCIA TECNICA | `fldvmVtg1ynyvyMW5` | dateTime | pericias.data_hora (tipo=TECNICA) | dateTime -> TEXT ISO | CÓPIA |
 | DATA PERÍCIA MÉDICA | `fldrXrmogGDUotQoh` | dateTime | pericias.data_hora (tipo=MEDICA) | dateTime -> TEXT ISO | CÓPIA |
-| NASCIMENTO | `flda88gB2QLJzqX5d` | date | processos.nascimento_parte (+ clientes.data_nascimento) | date na PROCESSUAL, texto na CÓPIA: normalizar.data_br. Divergencia -> processo_alias | CÓPIA |
+| NASCIMENTO | `flda88gB2QLJzqX5d` | date | processos.nascimento_parte (+ clientes.data_nascimento) | date na PROCESSUAL, texto na CÓPIA: normalizar.data_br. Completa clientes.data_nascimento onde vazio; ficha que continua sem -> pendência CADASTRO (1.012). Divergencia -> processo_alias | CÓPIA |
 | MOTIVO | `fld2sglKUtrY89Qye` | singleLineText | airtable_bruto | 1 registro na PROCESSUAL ("SEM TESTEMUNHA") e quatro na CÓPIA, sem função clara | CÓPIA |
 | _BACKUP_VALOR_ANTES_SCRIPT | `fld6Ob4Iz67W5SOjB` | singleLineText | airtable_bruto | lixo técnico: backup de 03-06/07/2026 antes de um script reescrever VALOR. Não vira coluna | só na PROCESSUAL |
 | _BACKUP_COMPLEXIDADE_ANTES_SCRIPT | `fldImV7gyBd4pCLvd` | singleLineText | airtable_bruto | idem | só na PROCESSUAL |
@@ -207,12 +207,12 @@ A fonte do que está **vivo**: os 22 números recentes, os 106 sem número, os l
 | TRT | `fldNjTzo9HaumzYe8` | singleSelect | processos.trt | normalizar.TRT: 21 opções poluidas -> número (1..24). "85ª" e os vazios -> conferências | CÓPIA |
 | VALOR | `fldtpiJdqwvzSRchp` | currency | processos.valor_causa_centavos | normalizar.dinheiro(): idem PROCESSUAL. Carga real: 3.722 preenchidos, soma conferida ao centavo | CÓPIA |
 | EMPRESA | `fldQr8KII3fj6RaEn` | multipleRecordLinks | processos.empresa_id | link -> FK empresas(id) | CÓPIA |
-| COMPLEXIDADE | `fldr2WHDjAuXmSEd9` | singleSelect | processos.complexidade | A/B/C; derivada do valor (C<=150k, B<=500k). Diferença da faixa -> complexidade_manual=true [CONFIRMAR 16] | CÓPIA |
+| COMPLEXIDADE | `fldr2WHDjAuXmSEd9` | singleSelect | processos.complexidade | A/B/C; derivada do valor (normalizar.complexidade_da_faixa: C<=150k, B<=500k). Letra diferente da faixa -> complexidade_manual=true — aplicado e provado (carga real: 0 casos, todas na faixa) [CONFIRMAR 16] | CÓPIA |
 | ADVOGADO | `fldFtmUazPjgT5Vba` | multipleRecordLinks | processos.advogado_id | link -> FK pessoas(id) | CÓPIA |
 | FASE PROCESSUAL | `fldpZfbG3Dj4oJOnC` | singleSelect | processos.fase | normalizar.FASE; EXECUÇÃO sem qualificação decidida por numero_cumprse/transito. As 1.403 divergências CÓPIA × PROCESSUAL -> conferências, uma por processo | CÓPIA |
-| STATUS DO PROCESSO | `fldPBWPDPunT9Il3G` | singleSelect | processos.fase | incidentes | derivado | normalizar.STATUS_PROCESSO: AGUARDANDO_* são derivados; ROUBADO/RECEBIDO POR ELES/RECUPERADO viram incidentes; ARQUIVADO vira resultado_final; REDISTRIBUIR vira tarefa | CÓPIA |
+| STATUS DO PROCESSO | `fldPBWPDPunT9Il3G` | singleSelect | processos.fase | incidentes | derivado | normalizar.STATUS_PROCESSO: AGUARDANDO_* são derivados; ROUBADO/RECEBIDO POR ELES/RECUPERADO viram incidentes; ARQUIVADO vira resultado_final; REDISTRIBUIR vira tarefa tipo REDISTRIBUICAO (1); TRÂNSITO EM JULGADO decide a fase da execução e vira ANOTAÇÃO — `transito_em` fica NULL porque a origem não tem a data (a da sentença não é ela); sem FASE PROCESSUAL e sem status -> CONHECIMENTO com conferência (58) | CÓPIA |
 | ENVIAR MENSAGEM | `fldk8X85hMO02Sx3b` | button | descartado | botao | CÓPIA |
-| STATUS CONHECIMENTO | `fld4PTXQ5VK9uY6X3` | singleSelect | decisões | audiências | derivado | SENTENCIADA -> decisões(SENTENCA); AUSENCIA -> audiência NAO_REALIZADA com motivo AUSENCIA_RECLAMANTE + resultado_final ARQUIVADO_AUSENCIA; o resto e derivado | CÓPIA |
+| STATUS CONHECIMENTO | `fld4PTXQ5VK9uY6X3` | singleSelect | decisões | audiências | derivado | SENTENCIADA -> decisões(SENTENCA); AUSENCIA -> audiência NAO_REALIZADA com motivo AUSENCIA_RECLAMANTE + resultado_final ARQUIVADO_AUSENCIA quando a fase é ENCERRADO e o resultado era ARQUIVADO ou vazio (126), senão conferência; SENTENCIADA / AGUARDANDO SENTENÇA também são EVIDÊNCIA de que a audiência passada aconteceu (ver DATA AUDIENCIA) | CÓPIA |
 | MOTIVO | `fldYEwcnX5KDpfgop` | singleLineText | airtable_bruto | 1 registro na PROCESSUAL ("SEM TESTEMUNHA") e quatro na CÓPIA, sem função clara | CÓPIA |
 | SENTENCA | `fldIODL3MBKzthFpK` | singleSelect | decisões.nota (tipo=SENTENCA) | RUIM/MEDIA/OTIMA -> nota. E avaliação, não resultado | CÓPIA |
 | DECISAO SENTENCA | `fldrUKtuvmfUIA3ut` | singleSelect | decisões.resultado_objetivo (tipo=SENTENCA) | PROCEDENTE / PARCIALMENTE PROCEDENTE / IMPROCEDENTE / EXTINTO S/ RESOLUCAO | CÓPIA |
@@ -222,20 +222,20 @@ A fonte do que está **vivo**: os 22 números recentes, os 106 sem número, os l
 | DATA ACORDAO | `fldDG9LKLVsZOT9Pg` | date | decisões.data (tipo=ACORDAO) | date -> TEXT ISO. NAO confundir com DATA DO ACORDO (o acordo entre as partes) | CÓPIA |
 | MAGISTRADO | `fld6mw1fPKilW87WA` | singleLineText | decisões.magistrado (tipo=SENTENCA) | texto. Em ~45% e quem homologou acordo, não quem julgou o merito: a análise por magistrado filtra por DECISAO SENTENCA preenchida | só na CÓPIA |
 | CLASSIFICACAO | `fldVHQhm4VVw91MvJ` | singleSelect | processos.rito + processos.classe_cnj + processos.classe_incidente | RT/AT = classe; ORDINÁRIO/SUMARÍSSIMO/SUMÁRIO = rito; as classes de incidente da CÓPIA (RR, AIRR, RRAg, Emb, EMBARGOS DE TERCEIRO, EXECUÇÃO *) vão para classe_incidente e para recursos [CONFIRMAR 17] | CÓPIA |
-| DATA AUDIENCIA | `fldn0bZKGzzg86uQq` | dateTime | audiências.data_hora + eventos | dateTime -> TEXT ISO. UMA LINHA por audiência: a origem sobrescrevia | CÓPIA |
+| DATA AUDIENCIA | `fldn0bZKGzzg86uQq` | dateTime | audiências.data_hora + eventos | dateTime -> TEXT ISO. UMA LINHA por audiência: a origem sobrescrevia. A SITUAÇÃO nasce pela evidência (Migracao.situacao_audiencia): ausência -> NAO_REALIZADA; sem data ou data >= leitura da origem -> DESIGNADA; data passada com sentença/acórdão/acordo/encerramento posterior, ou instrução encerrada, ou processo além do conhecimento -> REALIZADA com a evidência em `observacao`; data passada sem nada disso -> REALIZADA + conferência AUDIENCIA_SEM_RESULTADO (279). `historico_etapas.em` = a data da audiência | CÓPIA |
 | AUDIENCIA | `fldfn7q0rBFVuInlK` | singleSelect | audiências.tipo + audiências.modalidade | normalizar.AUDIENCIA separa tipo de modalidade (INSTRUCAO/VIDEO -> INSTRUCAO + VIDEO). UNA-RS também grava processos.rito=SUMARÍSSIMO [CONFIRMAR 17] | CÓPIA |
 | Nº  CumPrSe | `fld1cGAki3SIlZbR1` | singleLineText | processos.numero_cumprse | texto; é o gate numero_cumprse e decide EXECUÇÃO -> PROVISORIA | PROCESSUAL |
 | RESULTADO | `fldHmpf2oiTu20L52` | multilineText | processos.resultado_texto | multiline; o resultado em prosa | CÓPIA |
 | STATUS RECURSAL | `fldE3tgRGu0IOWPnr` | singleSelect | recursos (grau TRT/TST) | TST -> recurso pendente grau TST; AGUARDANDO JULGAMENTO -> grau TRT. O tipo do recurso [CONFIRMAR 22] nasce OUTRO quando a origem não diz | CÓPIA |
-| STATUS CumPrSe | `fldMqtTCoxi3EZ6E7` | singleSelect | processos.situacao_execucao | não é sub-máquina: 19 registros repetindo os estados da execução | CÓPIA |
-| STATUS DO CALCULO | `fldYUfMIYMpbhBrv7` | singleSelect | processos.situacao_execucao + cálculos | PENDENTE/JUNTADO/HOMOLOGADO são a presença de três fatos em cálculos | CÓPIA |
+| STATUS CumPrSe | `fldMqtTCoxi3EZ6E7` | singleSelect | processos.situacao_execucao | normalizar.STATUS_CUMPRSE, aplicado em Migracao.completar_execucao: preenche situacao_execucao só onde STATUS EXECUÇÃO calou (12); discordância com STATUS EXECUÇÃO ou com a fase -> conferência DIVERGENCIA_FONTE (9). O texto vai para situacao_execucao_original | CÓPIA |
+| STATUS DO CALCULO | `fldYUfMIYMpbhBrv7` | singleSelect | processos.situacao_execucao + cálculos | normalizar.STATUS_CALCULO -> situacao_execucao (AGUARDANDO_CALCULO / CALCULOS_APRESENTADOS / HOMOLOGADO) só onde STATUS EXECUÇÃO e CumPrSe calaram (471); em `calculos` fica `observacao` com o status — `homologado_em` fica NULL porque a origem NÃO tem a data (a carga anterior punha o ENCERRAMENTO: inventado) | CÓPIA |
 | CALCULO RCTE | `fld7voVZAMyswcV0j` | currency | cálculos.valor_centavos (base=RECLAMANTE) | currency -> centavos | CÓPIA |
 | SUCUMB RCTE | `fldfDoq1ys1aGn0J2` | currency | cálculos.sucumbencia_centavos (base=RECLAMANTE) | currency -> centavos | CÓPIA |
 | CALCULO RCDA | `fld047wJ57Sr1aT4x` | currency | cálculos.valor_centavos (base=RECLAMADA) | currency -> centavos | CÓPIA |
 | SUCUMB RCDA | `fldYWU9g1mgagHtyQ` | currency | cálculos.sucumbencia_centavos (base=RECLAMADA) | currency -> centavos | CÓPIA |
 | SUCUMB HOM | `fldMeo5CAPSmG5KQx` | currency | cálculos.sucumbencia_centavos (base=HOMOLOGADO) | currency -> centavos | CÓPIA |
 | VALOR HOM | `fldfDKXANsQ2fftjh` | currency | cálculos.valor_centavos (base=HOMOLOGADO) | currency -> centavos. PROCESSUAL vence: 127 preenchidos só nela | PROCESSUAL |
-| STATUS PAGAMENTO | `fldbQjy8KFsPiGdZX` | singleSelect | derivado de acordo_parcelas + recebimentos | seis rotulos para "quantas parcelas pagas e alguma atrasada". PARCELAMENTO CPC -> situacao_execucao; CESSAO DE CREDITOS -> credito_cedido_em | CÓPIA |
+| STATUS PAGAMENTO | `fldbQjy8KFsPiGdZX` | singleSelect | derivado de acordo_parcelas + recebimentos | seis rotulos para "quantas parcelas pagas e alguma atrasada" (derivados). PARCELAMENTO CPC -> situacao_execucao = PARCELAMENTO_916 onde vazio; CESSAO DE CREDITOS -> processos.credito_cedido = true (3) — `credito_cedido_em` e `cessionario` ficam NULL: a origem não os tem | CÓPIA |
 | ENCERRAMENTO | `fldQA3V008aWgVolE` | date | processos.encerrado_em | date -> TEXT ISO | CÓPIA |
 | DRIVE | `fld6hyVSCCrjy4HNd` | url | processos.drive_url | url | CÓPIA |
 | ASTREA | `fldOjPxn0cd09XD47` | url | processos.astrea_url | url | CÓPIA |
@@ -255,37 +255,37 @@ A fonte do que está **vivo**: os 22 números recentes, os 106 sem número, os l
 | AND. NECESSÁRIO | `fldF8mxBzD5cRsL4C` | singleSelect | tarefas (tipo=ANDAMENTO, texto_original) | "andamento necessário" é tarefa por definição. Encerrado/ACORDO são redundantes com a fase e não viram tarefa [CONFIRMAR 19] | PROCESSUAL |
 | AÇÃO | `fldbNuYY7kHhvPAij` | date | processos.ajuizamento_em | date -> TEXT ISO [CONFIRMAR: difere de DISTRIBUICAO em que?] | CÓPIA |
 | TEL VARA | `fldzDjqJNQYrMrBOz` | phoneNumber | processos.tel_vara | telefone | CÓPIA |
-| STATUS ACORDO | `fldmPIGUEID71M0ue` | singleSelect | acordos.situação | EM ANDAMENTO / CUMPRIDO / QUEBRA -> situação do acordo; QUEBRA também grava quebrado_em | CÓPIA |
+| STATUS ACORDO | `fldmPIGUEID71M0ue` | singleSelect | acordos.situação | EM ANDAMENTO / CUMPRIDO / QUEBRA -> acordos.situacao; `quebrado_em` fica NULL — a origem só tem o status, não a data da quebra. Acordo com VALOR ou DATA e sem status nasce EM_ANDAMENTO com conferência (9) | CÓPIA |
 | VALOR ACORDO | `fldsX34Hdi6gWfBOd` | currency | acordos.valor_centavos | currency -> centavos | CÓPIA |
 | TOTAL RECEBIDO | `flduvkfUUz051hyBl` | currency | recebimentos.valor_centavos (base=TOTAL) | currency -> centavos | CÓPIA |
 | SUCUMB RECEBIDO | `fldevSd5kepM7fqzt` | currency | recebimentos.valor_centavos (base=SUCUMBENCIA) | currency -> centavos. PROCESSUAL vence: 67 só nela | PROCESSUAL |
 | HONOR TOTAL | `fld6yZmxZQSqoa7GI` | currency | recebimentos.valor_centavos (base=HONORARIOS) | currency -> centavos | CÓPIA |
-| SITU. EMPRESA | `fld9nTJODAgIcIQtl` | multipleLookupValues (EMPRESA→STATUS EMPRESA) | empresas.situação | lookup: o atributo e da empresa. Divergencia com EMPRESAS -> conferências | PROCESSUAL |
+| SITU. EMPRESA | `fld9nTJODAgIcIQtl` | multipleLookupValues (EMPRESA→STATUS EMPRESA) | empresas.situação | lookup: o atributo e da empresa (JOIN). A divergência de verdade é do LINK: 423 processos apontam para reclamadas diferentes na CÓPIA e na PROCESSUAL -> conferência DIVERGENCIA_FONTE campo EMPRESA, com o nome de cada lado; o lookup só vira conferência própria quando o link é o mesmo e ainda discorda do cadastro (14) | PROCESSUAL |
 | BENS IDENTIFICADOS | `fldEU44SA3BMGftq0` | multipleSelects | empresas.bens_identificados | atributo da empresa, estava nos dois lugares | CÓPIA |
 | HIST. PAGAMENTO | `fldghU4b5RnjNapAS` | multipleSelects | empresas.hist_pagamento | idem | CÓPIA |
 | ULTIMA MOV | `fldUVIxnej2Gd9Oe9` | singleLineText | processos.ultima_movimentacao + ultima_movimentacao_em | texto "aaaa-mm-dd - descrição": a data é separada do texto | CÓPIA |
-| REVOGAÇÃO | `fldlL3QF5v6Nfy6zR` | singleSelect | processos.revogou_patrono_anterior | incidentes.revogacao_nos_autos_em | tarefas | normalizar.REVOGACAO. O SENTIDO depende do STATUS DO PROCESSO: em processo ROUBADO e o cliente que nos revogou (incidente); nos demais somos nos que juntamos a revogação do patrono anterior [CONFIRMAR 20]. Os 9 recados viram tarefa com o texto inteiro | PROCESSUAL |
-| DATA REVOG | `fldLXyHn58qh1Set9` | date | processos.revogacao_em | incidentes.revogacao_nos_autos_em | date -> TEXT ISO. PROCESSUAL vence: 509 preenchidos só nela | PROCESSUAL |
-| NOTIFICAÇÃO | `fld74RYjSUkhe9J8Z` | singleSelect | incidentes.situação + as datas da notificação | REDIGIDA -> DETECTADO + notificacao_redigida_em; ENVIADA -> NOTIFICADO; RECEBIDA/RESPONDIDA são datas | PROCESSUAL |
+| REVOGAÇÃO | `fldlL3QF5v6Nfy6zR` | singleSelect | processos.revogou_patrono_anterior | incidentes.revogacao_nos_autos_em | tarefas | normalizar.REVOGACAO + Migracao.revogacao_destino. O SENTIDO depende do STATUS DO PROCESSO: ROUBADO/RECEBIDO POR ELES/RECUPERADO (ou REVOGAÇÃO = ROUBADO) e o cliente que nos revogou (incidente); em qualquer outro caso somos nos que juntamos a revogação do patrono anterior -> revogou_patrono_anterior SIM/NÃO (794/66), haja ou não incidente por notificação/providência [CONFIRMAR 20]. Os recados viram tarefa (5). Provado em conferir.py | PROCESSUAL |
+| DATA REVOG | `fldLXyHn58qh1Set9` | date | processos.revogacao_em | incidentes.revogacao_nos_autos_em | date -> TEXT ISO. PROCESSUAL vence. A data NUNCA fica sem coluna: sentido 2 -> incidentes.revogacao_nos_autos_em (101); qualquer outro caso, com REVOGAÇÃO preenchida ou não -> processos.revogacao_em (1.326). REVOGAÇÃO = NÃO com data é contradição: grava-se e abre conferência (79). conferir.py prova 1.427 = 1.326 + 101 | PROCESSUAL |
+| NOTIFICAÇÃO | `fld74RYjSUkhe9J8Z` | singleSelect | incidentes.situação + as datas da notificação | REDIGIDA -> DETECTADO; ENVIADA/RECEBIDA/RESPONDIDA -> NOTIFICADO. As DATAS (redigida, enviada, recebida, resposta) ficam NULL: a origem não as tem, e a carga anterior punha DATA REVOG ou ENCERRAMENTO nelas (72 inventadas). O valor original vai para incidentes.airtable_bruto | PROCESSUAL |
 | PROVIDENCIAS | `fldpK9kuxpxrnH713` | singleLineText | incidentes.providencia_texto + tarefas | NOTIFICAR -> tarefa "enviar notificação"; TRAVAR O RECEBIMENTO -> tarefa "pedir reserva de honorários (EOAB art. 22 §4º)" | PROCESSUAL |
 | SUCUMBÊNCIA % | `fldks912wlwUNkLLI` | singleLineText | processos.sucumbencia_percent | texto "5%" -> número. O "2500%" é erro: vai para conferências | CÓPIA |
-| CLIENTE AVISADO? | `fldFZHpbUQTtHLVck` | checkbox | incidentes.cliente_avisado_em | checkbox -> data (a data do registro, quando não há outra) [CONFIRMAR] | PROCESSUAL |
+| CLIENTE AVISADO? | `fldFZHpbUQTtHLVck` | checkbox | incidentes.cliente_avisado_em | checkbox -> incidentes.airtable_bruto. `cliente_avisado_em` fica NULL: a origem não tem a data (0 usos hoje) [CONFIRMAR] | PROCESSUAL |
 | CAPTADOR | `fldM9FYwqqrt028S0` | multipleRecordLinks | processos.captador_id | link -> FK pessoas(id) | CÓPIA |
-| TELEFONE | `fldbfyukYiqC0Hkc3` | phoneNumber | processos.telefone_parte (+ clientes.telefone) | CÓPIA vence; a outra grafia vai para processo_alias | CÓPIA |
-| ASSINATURA | `fldE4LiWHGVLwLFmQ` | date | processos.assinatura_em (+ clientes.data_assinatura_contrato) | date -> TEXT ISO. CÓPIA vence: 58% contra 4% | CÓPIA |
+| TELEFONE | `fldbfyukYiqC0Hkc3` | phoneNumber | processos.telefone_parte (+ clientes.telefone na ficha criada dos autos) | CÓPIA vence; a outra grafia vai para processo_alias | CÓPIA |
+| ASSINATURA | `fldE4LiWHGVLwLFmQ` | date | processos.assinatura_em (+ clientes.data_assinatura_contrato) | date -> TEXT ISO. CÓPIA vence: 58% contra 4%. Completa a ficha do cliente onde ela não tinha (ficha criada dos autos ou PRÉ sem DATA DE ASSINATURA); ficha que continua sem -> pendência DOCUMENTO/CONTRATO obrigatória (1.283) | CÓPIA |
 | status_disparo | `fldwFWTG2IHDz3ml7` | singleLineText | automacao_log (origem N8N) | idem PRE | CÓPIA |
 | tipo_disparo | `fldHslk7xJyh4geK9` | singleLineText | automacao_log.detalhe | idem | CÓPIA |
 | data_solicitacao_disparo | `fldCusUDDQZVVlG90` | singleLineText | automacao_log.em | idem | CÓPIA |
 | responsavel_interno | `fldOFRB4MsT7afsjh` | singleLineText | automacao_log.detalhe | idem | CÓPIA |
 | solicitante_disparo | `fldMnopQa1geAfZ6F` | singleLineText | automacao_log.detalhe | idem | CÓPIA |
-| Created By | `fldS83Q4JgPzTGrwO` | createdBy | processos.atualizado_em (PROCESSUAL) | processos.airtable_bruto (CÓPIA) | na PROCESSUAL o tipo é lastModifiedTime apesar do nome; na CÓPIA é createdBy de verdade e o nome de quem criou fica no bruto | CÓPIA |
+| Created By | `fldS83Q4JgPzTGrwO` | createdBy | processos.atualizado_em (PROCESSUAL) | processos.airtable_bruto (CÓPIA) | na PROCESSUAL o tipo é lastModifiedTime apesar do nome e vai para processos.atualizado_em (2.652); na CÓPIA é createdBy de verdade e o nome de quem criou fica no bruto. O createdTime do record vai para processos.criado_em / clientes.criado_em da ficha dos autos, e é o último recurso do histórico | CÓPIA |
 | DATA PERÍCIA TECNICA | `fldUtGNLeRxja7zak` | dateTime | pericias.data_hora (tipo=TECNICA) | dateTime -> TEXT ISO | CÓPIA |
 | DATA PERÍCIA MÉDICA | `fldQ4cGTtZNF32DCw` | dateTime | pericias.data_hora (tipo=MEDICA) | dateTime -> TEXT ISO | CÓPIA |
-| NASCIMENTO | `fldzfTA6f9VueZKjs` | singleLineText (na PROCESSUAL é date) | processos.nascimento_parte (+ clientes.data_nascimento) | date na PROCESSUAL, texto na CÓPIA: normalizar.data_br. O que não é data (1 registro com ano 2977) fica NULL + conferência DATA_ILEGIVEL — a primeira versão descartava o aviso. Divergencia -> processo_alias | CÓPIA |
+| NASCIMENTO | `fldzfTA6f9VueZKjs` | singleLineText (na PROCESSUAL é date) | processos.nascimento_parte (+ clientes.data_nascimento) | date na PROCESSUAL, texto na CÓPIA: normalizar.data_br. Completa clientes.data_nascimento onde vazio; ficha que continua sem -> pendência CADASTRO (1.012). O que não é data (1 registro com ano 2977) fica NULL + conferência DATA_ILEGIVEL. Divergencia -> processo_alias | CÓPIA |
 | RESULTADO RECURSO | `fldZkL74gu3iQgXcg` | singleSelect | decisões.resultado_objetivo (tipo=ACORDAO) + recursos.resultado | PROVIDO / PARCIALMENTE PROVIDO / NEGADO PROVIMENTO / NAO CONHECIDO. É o resultado OBJETIVO, que não existe na PROCESSUAL | só na CÓPIA |
 | E-MAIL | `fldgG8Hd7zpleuQ1e` | email | processos.email_parte (+ clientes.email) | extraído da qualificação da inicial | só na CÓPIA |
 | CPF | `fldjR2BqXLKic3bLi` | singleLineText | processos.cpf_parte (+ clientes.cpf) | só dígitos; é a chave que casa o processo com a ficha do cliente | só na CÓPIA |
-| CNPJ RECLAMADA | `fldzoCBbwPimGJ8TO` | singleLineText | processos.cnpj_reclamada + razao_social_reclamada + empresas.cnpj | o campo traz CNPJ e razao social juntos: normalizar.cnpj_razao separa | só na CÓPIA |
+| CNPJ RECLAMADA | `fldzoCBbwPimGJ8TO` | singleLineText | processos.cnpj_reclamada + razao_social_reclamada + empresas.cnpj | o campo traz CNPJ e razao social juntos: normalizar.cnpj_razao separa. Sobe para empresas.cnpj só quando INEQUÍVOCO — todos os processos da empresa com o mesmo CNPJ (518); mais de um CNPJ na mesma empresa (112) ou o mesmo CNPJ em mais de um cadastro (59) -> conferência EMPRESA_AMBIGUA. A razão social só sobe quando é uma só (187) | só na CÓPIA |
 | TURMA TST | `fldtI4VOrmuR4lmfB` | singleLineText | processos.turma_tst | texto; não confundir com TURMA (TRT-2) | só na CÓPIA |
 | RELATOR TST | `fld0D2Xe2qPSYoFHE` | singleLineText | processos.relator_tst | texto (ministro relator) | só na CÓPIA |
 | ARQUIVO TST | `fldnDFmHWlZ2mIRau` | date | processos.arquivo_tst_em | date -> TEXT ISO. A descrição na origem e cópia errada da de RELATOR TST [CONFIRMAR: e a data do arquivamento no TST?] | só na CÓPIA |
@@ -311,7 +311,7 @@ Não e entidade própria: vira `recebimentos`, `repasses` e `processos.arquivado
 | VALOR SUCUMBÊNCIA | `fld5bNSeZULhtm1z6` | currency | recebimentos.valor_centavos (base=SUCUMBENCIA) | idem | — |
 | STATUS RECEBIMENTO | `fldjVs3BRdXuZ1ous` | singleSelect | derivado de recebimentos + acordo_parcelas | duas familias de opções (Title Case nunca usada e as copiadas de STATUS PAGAMENTO). Nenhuma vira coluna | — |
 | STATUS REPASSE | `fldH73Oe7hXIVU8gn` | singleSelect | derivado de repasses | vazio em 100%. O gate repasse_registrado obriga daqui em diante [CONFIRMAR 26] | — |
-| STATUS ARQUIVAMENTO | `fldRXQMrAUjP7XTFb` | singleSelect | processos.arquivado_em + tarefas(tipo=ARQUIVAMENTO) | Arquivado -> data; Em andamento -> tarefa aberta. Arquivo físico é providência, não fase [CONFIRMAR 28] | — |
+| STATUS ARQUIVAMENTO | `fldRXQMrAUjP7XTFb` | singleSelect | processos.arquivado (bool) + tarefas(tipo=ARQUIVAMENTO) | Arquivado -> arquivado = true (37); Não arquivado -> false; Em andamento -> tarefa aberta (30). `arquivado_em` fica NULL: a origem não tem a data (a carga anterior copiava o encerramento). O registro do PÓS inteiro vai para processos.airtable_bruto.pos. Arquivo físico é providência, não fase [CONFIRMAR 28] | — |
 | RESPONSAVEL | `flduzeLbJpPQfDsRb` | multipleRecordLinks | tarefas.responsavel_id | link -> FK pessoas(id): quem responde pelo pós-processo | — |
 | EVENTOS | `fldXAKlcH7qnnDtnN` | singleLineText | descartado | vazio em 100% | — |
 | DATA DE ASSINATURA | `fldoIShmhcL6p50mf` | date | descartado | vazio em 100% | — |
@@ -529,3 +529,47 @@ As linhas marcadas `[CONFIRMAR ...]` acima. As que mudam **dado gravado** (e nã
    conferência aberta; se for, vira `11ª TURMA`.
 8. **`RESCISAO` = "DEMISSÃO"** sozinho (9 fichas) — sem justa causa, a pedido? Hoje fica sem
    modalidade, com conferência; a prescrição e a urgência RI dependem disso.
+
+## O histórico da carga tem data — e nunca a da carga
+
+`historico_etapas` recebe, para cada entidade migrada, uma linha `origem = MIGRACAO` cuja data
+`em` é a MELHOR que a origem oferece para a etapa ATUAL (`Migracao.quando`), com o campo de
+onde saiu escrito no `motivo`:
+
+| entidade / etapa | candidatos, na ordem |
+|---|---|
+| cliente em LEAD, DOCUMENTACAO, ENTREVISTA | DATA DE ASSINATURA |
+| cliente em PETICAO_* e DISTRIBUIDO | DISTRIBUIÇAO do processo dele (só DISTRIBUIDO), DATA ENTREVISTA, DATA DE ASSINATURA |
+| cliente cancelado, prescrito, stand by, sem resposta | (a origem não diz quando) |
+| ficha criada dos autos | DISTRIBUIÇAO, AÇÃO, ASSINATURA |
+| processo em CONHECIMENTO | DISTRIBUIÇAO, AÇÃO |
+| RECURSAL, EXECUCAO_PROVISORIA | DATA SENTENCA, DISTRIBUIÇAO, AÇÃO |
+| EXECUCAO_DEFINITIVA | DATA ACORDAO, DATA SENTENCA, DISTRIBUIÇAO, AÇÃO |
+| ACORDO / RECEBENDO | DATA DO ACORDO, (DATA ACORDAO), DATA SENTENCA, DISTRIBUIÇAO, AÇÃO |
+| ENCERRADO, DESISTENCIA | ENCERRAMENTO, ARQUIVO TST, DATA ACORDAO, DATA SENTENCA, DATA DO ACORDO, DISTRIBUIÇAO, AÇÃO |
+| SOBRESTADO | ULTIMA MOV, DATA ACORDAO, DATA SENTENCA, DISTRIBUIÇAO, AÇÃO |
+| audiência REALIZADA / NAO_REALIZADA | DATA AUDIENCIA |
+| audiência DESIGNADA | (a designação não tem data na origem) |
+| incidente | DATA REVOG, quando é do incidente |
+
+Sem candidato válido (entre 1990 e a data em que a origem foi lida), vale o `createdTime` do
+registro no Airtable, e o motivo diz isso. A data da carga nunca entra — foi ela que zerou o SLA
+de 10.183 registros. `conferir.py` prova: nenhuma linha datada da carga, e o histórico dos
+processos por ano bate com a regra recalculada da origem.
+
+## O que a carga não inventa (regra 3)
+
+Campo cuja data a origem não tem fica NULL; o fato vai para onde cabe:
+
+| fato | onde fica | o que a carga anterior fazia |
+|---|---|---|
+| cálculo homologado | `processos.situacao_execucao = HOMOLOGADO` + `calculos.observacao` | `homologado_em = ENCERRAMENTO` (411) |
+| notificação redigida/enviada/recebida/respondida | `incidentes.situacao` + `airtable_bruto` | as datas = DATA REVOG ou ENCERRAMENTO (72) |
+| cliente avisado | `incidentes.airtable_bruto` | `cliente_avisado_em = ENCERRAMENTO` |
+| trânsito em julgado | fase EXECUCAO_DEFINITIVA + anotação `[CONFIRMAR: data do trânsito]` (25) | `transito_em = DATA SENTENCA` |
+| pasta arquivada | `processos.arquivado = true` (37) | `arquivado_em = encerrado_em` |
+| testemunha confirmada | `testemunhas.situacao = CONFIRMADA` | `confirmada_em = DATA ULTIMO CONTATO` (180) |
+| cobranças da testemunha | só a última leva DATA ULTIMO CONTATO | todas com a mesma data |
+| crédito cedido | `processos.credito_cedido = true` (3) | nada (de/para prometia data) |
+| acordo quebrado | `acordos.situacao = QUEBRADO` (4) | nada (de/para prometia `quebrado_em`) |
+

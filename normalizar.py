@@ -160,6 +160,19 @@ def percentual(v):
     return p, None
 
 
+def complexidade_da_faixa(valor_centavos):
+    """A/B/C pelo valor da causa (docs/de-para.md, COMPLEXIDADE): C até 150 mil,
+    B até 500 mil, A acima. Onde a origem diz outra letra, alguém decidiu à mão
+    e `processos.complexidade_manual` marca isso. [CONFIRMAR 16]"""
+    if valor_centavos is None:
+        return None
+    if valor_centavos <= 150_000_00:
+        return "C"
+    if valor_centavos <= 500_000_00:
+        return "B"
+    return "A"
+
+
 def cnpj_razao(v):
     """`CNPJ RECLAMADA` traz CNPJ e razão social no mesmo campo. Separa os dois;
     o que não tiver 14 dígitos fica só como razão social."""

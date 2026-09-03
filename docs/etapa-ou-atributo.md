@@ -52,7 +52,7 @@ valor (fica em `airtable_bruto`).
 |---|---|---|
 | PENDENTE (41) | **etapa** `PETICAO_PENDENTE` | Sem redator ainda. |
 | EM CRIAÇÃO (6) | **etapa** `PETICAO_EM_CRIACAO` | |
-| AGUARDANDO APROVAÇÃO (54) | **etapa** `PETICAO_AGUARDANDO_APROVACAO` (grupo Gestão) | O gargalo ganha dono e SLA (2 dias). [CONFIRMAR pergunta 8: quem aprova.] |
+| AGUARDANDO APROVAÇÃO (54) | **etapa** `PETICAO_AGUARDANDO_APROVACAO` (grupo **Petição Inicial**) | O gargalo ganha dono e SLA (2 dias). Resposta 8 do Lucas (03/09/2026): quem aprova é o advogado da equipe de Petição Inicial — a transição exige papel ADVOGADO **e** o gate `setor_peticao_inicial` (`pessoas.setor = 'Petição Inicial'`, função `pessoa_no_setor` no banco). Gestor e Direção não aprovam por hierarquia [CONFIRMAR: a Direção também?]. Sem `pessoas.setor` preenchido (pergunta 30) ninguém aprova. |
 | APROVADA (5) | **etapa** `PETICAO_APROVADA` | |
 | VALIDAÇÃO (0) | **descartada** | Nunca usada; se for "revisão antes de aprovar", é a própria AGUARDANDO_APROVACAO. |
 | DISTRIBUIDA (486) | **etapa** `DISTRIBUIDO` (gate `numero_cnj`) | Distribuir é o fim do funil e o nascimento do processo. |
@@ -121,7 +121,7 @@ valor (fica em `airtable_bruto`).
 | AGUARDANDO SENTENÇA (28) | **derivado** | Como acima. |
 | SENTENCIADA (545 / 1.687) | **fato** `decisoes` tipo SENTENCA (data, resultado objetivo, nota) — gate `sentenca_registrada` | A sentença é o fato que destrava recurso e execução. |
 | ACORDO EM ANDAMENTO (15 / 32) | **etapa** `ACORDO` | |
-| AUSÊNCIA (17 / 126) | **evento**: audiência `NAO_REALIZADA` com `motivo = AUSENCIA_RECLAMANTE` + processo `ENCERRADO` com `resultado_final = ARQUIVADO_AUSENCIA` (art. 844 CLT) | É perda evitável e precisa ser medida por captador/entrevistador — por isso fica no motivo da audiência, não escondida num status. |
+| AUSÊNCIA (17 / 126) | **evento**: audiência `NAO_REALIZADA` com `motivo = AUSENCIA_RECLAMANTE` + processo `ENCERRADO` com `resultado_final = ARQUIVADO_AUSENCIA` (art. 844 CLT) — aplicado nos 126 (fase ENCERRADO com resultado ARQUIVADO); fase que discordasse abriria conferência | É perda evitável e precisa ser medida por captador/entrevistador — por isso fica no motivo da audiência, não escondida num status. |
 | DESISTÊNCIA (36 / 219) | **etapa** `DESISTENCIA` | |
 | ARQUIVADO (CÓPIA, 46) | **etapa** `ENCERRADO` resultado ARQUIVADO | |
 
@@ -207,6 +207,7 @@ Decisão de desenho: **atributo com lista fechada e ordenada, não sub-máquina 
 | CONCILIAÇÃO EM EXECUÇÃO (118) | `tipo = CONCILIACAO_EXECUCAO` | |
 | JULGAMENTO (22) | `tipo = JULGAMENTO` | Audiência de publicação de sentença; abre o prazo de RO na data (Súmula 197 TST). |
 | DATA AUDIENCIA (uma por processo) | **linhas** em `audiencias` — a atual e as anteriores | O Airtable sobrescrevia; a redesignação vira linha nova ligada por `redesignada_de`. |
+| audiência migrada com data no PASSADO | **situação pela evidência** (`Migracao.situacao_audiencia`): ausência → `NAO_REALIZADA`; data futura ou sem data → `DESIGNADA` (263); passada com sentença, acórdão, acordo ou encerramento posterior, instrução encerrada ou processo além do conhecimento → `REALIZADA` com a evidência em `observacao` (2.370); passada sem nada disso → `REALIZADA` + conferência `AUDIENCIA_SEM_RESULTADO` (279) | A máquina AUDIÊNCIA não pode nascer com a pauta inteira do passado como pendente: 2.649 audiências entravam como DESIGNADA, poluindo `agora`, `v_audiencias_sem_preparacao` e a regra AUDIENCIA_PREPARAR. Não há etapa "não sei"; o remédio é o mesmo de `fase_execucao` — a leitura mais provável, dita e conferida. |
 
 ### STATUS ADVIDEO
 

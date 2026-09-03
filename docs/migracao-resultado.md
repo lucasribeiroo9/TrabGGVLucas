@@ -1,7 +1,37 @@
 # Resultado da migração — a carga REAL, provada
 
-> 03/09/2026, segunda rodada do DBA de migração. Nenhum nome de cliente, CPF, telefone, e-mail ou
-> número de processo aparece aqui — só contagens.
+> 03/09/2026, terceira rodada do DBA de migração (a correção do que a auditoria das fases 3 e 4
+> apontou — `docs/auditoria-fase-3-4.md`). Nenhum nome de cliente, CPF, telefone, e-mail ou número
+> de processo aparece aqui — só contagens.
+
+## O que mudou nesta rodada, item a item da auditoria
+
+Banco de trabalho: `trab_dba` (Postgres 16 local), porque o DEV estava provando o portal em
+`trab_prova`; no fim, `trab_prova` foi recriada com a carga nova e as 36 contas voltaram sozinhas.
+`conferir.py` passou de 182 para **249 linhas, TUDO CONFERE**, na carga direta e no plano B
+(`dados/carga_real.sql`, regenerado).
+
+| # | defeito | correção | prova |
+|---|---|---|---|
+| 1 | `limpar()` apagava `usuarios` (TRUNCATE CASCADE em `pessoas`: 37 → 0) | `Banco.guardar()` lê contas e conferências decididas ANTES de limpar (ou de derrubar o schema, no `--recriar`); `Migracao.restaurar_usuarios()` as devolve com o mesmo id, hash, papel e pessoa recasada pelo record do Airtable; dono/resolvedor das conferências também recasados | 36 contas criadas por `auth.py equipe`; recarga sem e com `--recriar`: as 36 linhas iguais byte a byte (`cmp`); 34 de 34 entram com a senha provisória original por `auth.autenticar` (0 com senha errada); `auth.py equipe` de novo: nada a criar; 2 conferências decididas (RESOLVIDA com dono, IGNORADA) voltaram iguais |
+| 2 | DATA REVOG perdida em 648 processos; sentido 1 perdido em 164 | `Migracao.revogacao_destino`: a data vai para o incidente no sentido 2 (status ROUBADO/RECEBIDO/RECUPERADO ou REVOGAÇÃO = ROUBADO) e para o processo em todo o resto; o sinal SIM/NÃO do sentido 1 é gravado haja ou não incidente por notificação; NÃO com data abre conferência | 1.427 datas na origem = 1.326 `revogacao_em` + 101 `revogacao_nos_autos_em`; 794 SIM / 66 NÃO; 79 contradições em conferência |
+| 2 | `empresas.cnpj` zerado | CNPJ da CÓPIA sobe para a empresa quando todos os processos dela trazem o mesmo (`cnpj_das_empresas`); senão EMPRESA_AMBIGUA | 518 empresas com CNPJ (187 com razão social única); 112 com mais de um CNPJ + 59 CNPJs em mais de um cadastro = 171 conferências |
+| 3 | 2.649 audiências passadas nasciam DESIGNADA | `Migracao.situacao_audiencia`: pela evidência — sentença/acórdão/acordo/encerramento posterior, instrução encerrada ou processo além do conhecimento → REALIZADA com a evidência em `observacao`; sem nada → REALIZADA + conferência AUDIENCIA_SEM_RESULTADO; futura ou sem data → DESIGNADA | 2.649 REALIZADA (2.370 com evidência + 279 em conferência), 263 DESIGNADA, 123 NAO_REALIZADA; "audiência DESIGNADA no passado" = 0; `v_audiencias_sem_preparacao` 2.670 → 21 |
+| 4 | histórico da carga datado de hoje (SLA zerado) | `Migracao.quando()`: a melhor data da origem para a etapa atual (tabela em `docs/de-para.md`), senão o `createdTime` do registro, com o motivo dizendo qual; o "hoje" é a data em que a origem foi lida (`data_referencia()`), não o relógio | 0 linhas datadas da carga; 9.607 com data de campo (DATA AUDIENCIA 2.769, DISTRIBUIÇAO do processo 2.758, ENCERRAMENTO 2.558, DISTRIBUIÇAO 720, DATA SENTENCA 473, DATA REVOG 101, …) e 576 com a criação do registro; histórico dos processos por ano bate com a regra recalculada; `v_estagnados` 0 → 674 |
+| 5 | datas inventadas | `homologado_em` (411), datas da notificação (72), `cliente_avisado_em`, `arquivado_em` (37), `transito_em` (25) e `confirmada_em` da testemunha (180) ficam NULL; o fato vai para `situacao_execucao`, `incidentes.situacao`, `processos.arquivado`, anotação de trânsito e `testemunhas.situacao`; só a última cobrança leva a data do último contato | seção "NADA INVENTADO" do `conferir.py`: 10 linhas que têm de dar zero, e dão |
+| 6 | de/para declarado e não aplicado | `completar_execucao`: CumPrSe (12) → cálculo (471) → pagamento completam `situacao_execucao` onde STATUS EXECUÇÃO calou; CESSAO → `credito_cedido` (3); REDISTRIBUIR → tarefa REDISTRIBUICAO (1); AUSÊNCIA → `ARQUIVADO_AUSENCIA` (126); QUEBRA → `quebrado_em` continua NULL porque a origem não tem a data (de/para corrigido); complexidade fora da faixa → `complexidade_manual` (0 — todas na faixa) | linhas "completada por", "resultado final do processo", "crédito cedido", "complexidade decidida à mão", "tarefas da carga por tipo" |
+| 7 | resposta 8 não implementada | `governanca.sql`: etapa com grupo Petição Inicial; aprovar/devolver/cancelar exigem papel ADVOGADO + gate `setor_peticao_inicial`; função `pessoa_no_setor()` no banco; gate em `fluxo.py` lê `pessoas.setor`; `equipe.py` deixa de traduzir Gestão → Petição Inicial; `docs/governanca.md` regerado | `docs/governanca.md`, `etapa-ou-atributo.md`, `governanca-para-confirmar.md`. Atenção DEV: `fluxo.transicoes()` ganhou `pessoa_id` — `app.py` precisa passá-lo, senão a ação aparece travada com o motivo dito |
+| 8 | fichas dos autos sem assinatura (1.556) e sem nascimento (1.934) | a ficha nova leva ASSINATURA, NASCIMENTO, TELEFONE, E-MAIL e `criado_em` dos autos; a CÓPIA também completa a ficha da PRÉ onde vazia; o que continua sem vira pendência DOCUMENTO/CONTRATO (obrigatória) ou CADASTRO | 1.283 pendências CONTRATO (7 da PRÉ + 1.276 dos autos), 1.012 CADASTRO (130 + 882); clientes com assinatura e com nascimento conferidos contra a origem |
+| 9 | 11 tabelas sem contagem e uma linha circular | toda tabela tem linha da origem (decisões, recursos, acordos, cálculos, recebimentos, incidentes, tarefas por tipo, anotações, eventos, contatos, alias, automacao_log, pendências); o histórico é contado repetindo da origem a regra do dono do processo (`dono_do_processo`, pura) | 249 linhas, TUDO CONFERE |
+
+Mais o que apareceu no caminho: 58 registros só da PROCESSUAL sem fase nem status entravam em
+CONHECIMENTO calados (agora conferência); 9 acordos com valor e sem STATUS ACORDO nasciam
+EM_ANDAMENTO calados (conferência); 423 processos ligados a reclamadas diferentes na CÓPIA e na
+PROCESSUAL (conferência EMPRESA, com o nome de cada lado — é a causa das 297 "SITU. EMPRESA" que
+o Auditor viu; sobram 14 de verdade); o registro do PÓS agora vai inteiro para
+`processos.airtable_bruto.pos`; `processos.atualizado_em` recebe o lastModifiedTime da PROCESSUAL.
+`do_conector.py` não precisou de correção. O que a recarga ainda apaga: prazos, petições,
+repasses e parcelas nascidos no portal — carga é para antes de o portal entrar em uso.
 
 ## Onde a coisa está, em uma frase
 
@@ -43,15 +73,16 @@ sufixo `[fld…]` para nenhum dos dois sumir. A conferência cruzada com o schem
 | empresas | 1.103 | | calculos | 1.755 |
 | fragilidades | 17 | | acordos | 1.393 |
 | clientes | **3.067** (797 da PRÉ + 2.270 criados dos autos) | | recebimentos | 2.428 |
-| pendencias | 2.235 | | incidentes | 226 |
-| processos | **3.855** | | tarefas | 202 |
+| pendencias | 4.530 (2.235 documentos + 1.283 CONTRATO + 1.012 CADASTRO) | | incidentes | 226 |
+| processos | **3.855** | | tarefas | 203 |
 | processo_alias | 653 | | eventos | 3.432 |
 | audiencias | 3.035 | | contatos | 164 |
-| pericias | 15 | | anotacoes | 990 |
+| pericias | 15 | | anotacoes | 1.015 |
 | testemunhas | 424 | | documentos (metadado de anexo) | 8 (4.320.523 bytes) |
 | testemunha_vinculos | 510 | | automacao_log | 1.629 |
 | testemunha_auditoria | 2 | | historico_etapas | 10.183 |
-| conferencia_faltantes | 1.067 | | conferencias | **3.300** |
+| conferencia_faltantes | 1.067 | | conferencias | **4.342** |
+| usuarios | preservados entre cargas (0 na primeira) | | | |
 
 Zero, de propósito: `acordo_parcelas`, `repasses`, `prazos`, `peticoes`, `usuarios`,
 `automacoes`, `auditoria` — nascem no sistema, não na origem. `fluxos`, `fluxo_etapas`,
@@ -65,12 +96,13 @@ casaram com um registro da PROCESSUAL e trazem os dois lados no `airtable_bruto`
 
 | tipo de conferência | linhas | resultado |
 |---|---:|---|
-| contagem por tabela (inclui anexos, bytes de anexo, pendências, audiências, perícias, histórico, testemunhas sem nome) | 19 | ok |
-| contagem por opção de select (papel, situação de empresa/testemunha, modalidade da rescisão, canal/campanha, documento pendente, turma/órgão, etapa do cliente, fase, situação da execução, tipo de audiência, resultado da sentença e do acórdão, situação do acordo) | 112 | ok |
-| soma de cada campo em R$, ao centavo (valor da causa, 9 campos de cálculo, acordo, honorário, parcela, 4 bases de recebimento, fragilidades, faltantes) + valor implausível → conferência | 20 | ok |
-| cada ligação do Airtable (13 FKs: clientes, processos, testemunhas, fragilidades, faltantes; testemunha×processo 336, testemunha×cliente 174) | 13 | ok |
-| integridade (record repetido, bruto ausente, fase e etapa fora do mapa, histórico, gatilhos ligados, sequências, RLS, STATUS EXECUÇÃO conferido ou aplicado) | 18 | ok |
-| **total** | **182 linhas** | **TUDO CONFERE** |
+| contagem por tabela — TODA tabela que a carga escreve (inclui decisões, recursos, acordos, cálculos, incidentes, tarefas por tipo, anotações, eventos, contatos, alias, automacao_log, fichas dos autos, pendências de cadastro, histórico contado da origem) | 42 | ok |
+| contagem por opção de select (+ situação da execução completada, resultado final, situação da audiência, sentido da revogação, DATA REVOG, crédito cedido, complexidade manual, trânsito, pasta arquivada) | 128 | ok |
+| soma de cada campo em R$, ao centavo + linhas de recebimento + valor implausível → conferência | 21 | ok |
+| cada ligação do Airtable + CNPJ da empresa, EMPRESA_AMBIGUA, EMPRESA divergente, SITU. EMPRESA | 17 | ok |
+| integridade (record repetido, bruto, mapa, histórico, gatilhos, sequências, RLS, STATUS EXECUÇÃO) | 19 | ok |
+| nada inventado (10 linhas que têm de dar zero) + histórico dos processos por ano | 22 | ok |
+| **total** | **249 linhas** | **TUDO CONFERE** |
 
 Somas que atravessaram inteiras (em centavos): valor da causa 69.961.541.433; cálculo do
 reclamante 4.431.877.169; homologado 6.773.521.615; acordos 2.929.091.297; recebido total
@@ -82,6 +114,9 @@ da recarga, e a prova seguiu passando. E o **plano B** (`dados/carga_real.sql`, 
 53.369 linhas, 48.224 INSERTs, gerado em 2 s) aplicado com `psql -v ON_ERROR_STOP=1` num banco
 vazio em 25 s deu TUDO CONFERE e as mesmas contagens em todas as tabelas. É o caminho para subir
 ao Supabase sem URI, em blocos pelo `apply_migration`. Fica em `dados/`, fora do git.
+Regenerado nesta rodada com `migrar.py --recriar --sql-saida dados/carga_real.sql`: 39.832.828 bytes,
+58.439 linhas, 51.489 INSERTs, aplicado em 26 s num banco vazio → TUDO CONFERE e as mesmas
+contagens da carga direta, tabela a tabela.
 
 ## Quantos valores foram normalizados, de/para — os campos poluídos
 
@@ -100,7 +135,7 @@ ao Supabase sem URI, em blocos pelo `apply_migration`. Fica em `dados/`, fora do
 | STATUS ENTREVISTA (PRÉ) | 592 | 448 ENTREVISTA-OK → fato · 113 DESISTÊNCIA + 17 SEM RESPOSTA + 2 STAND-BY + 3 PENDENTE → etapa · 7 AGENDADA → evento · 2 PRIMEIRO CONTATO → contatos | 0 |
 | PENDENCIAS (PRÉ, multi-select) | 2.239 marcas | 2.235 pendências de documento em 8 tipos (472 TRCT, 465 PROVAS, 441 HOLERITES — 36 delas "HOLERITE" —, 388 DOCS MÉDICOS, 244 FGTS, 113 CTPS, 98 CNH/RG, 14 PIS) | 4 ("OK", "DOCUMENTAÇÃO OK": não são documento) |
 | ETAPA + STATUS PETIÇÃO + STATUS ENTREVISTA + STATUS DOCUMENTAÇÃO → uma etapa | 797 | 489 DISTRIBUIDO · 169 CANCELADO · 54 PET. AGUARDANDO APROVAÇÃO · 35 PET. PENDENTE · 19 DOCUMENTAÇÃO · 14 SEM RESPOSTA · 6 PET. EM CRIAÇÃO · 5 PET. APROVADA · 4 ENTREVISTA · 2 STAND BY | 3 divergências ETAPA×PETIÇÃO em conferência |
-| REVOGAÇÃO (PROCESSUAL vence) | 1.029 / 696 | 774 SIM · 39 NÃO · 42+46 NÃO SE APLICA; 5 recados viraram tarefa | 0 |
+| REVOGAÇÃO (PROCESSUAL vence) | 1.029 / 696 | sentido 1: 794 SIM · 66 NÃO em `revogou_patrono_anterior`; sentido 2: 40 no incidente; NÃO SE APLICA fica NULL; 5 recados viraram tarefa. DATA REVOG: 1.326 no processo + 101 no incidente = 1.427 | 79 (NÃO com data: conferência) |
 | AND. NECESSÁRIO | 138 / 127 | 73 tarefas de andamento (inclui 3 recados longos, título cortado e texto inteiro guardado); "Encerrado" (63) e "ACORDO" (1) não viram tarefa | 0 |
 | DEMISSAO (PRÉ, 6 grafias de data) | 616 | 616 | 0 |
 | NASCIMENTO (CÓPIA, texto) | 2.509 | 2.508 | 1 (ano 2977) |
@@ -131,12 +166,14 @@ vence está na coluna **vence** de `docs/de-para.md`; nos 11 campos em que a PRO
 PROVIDENCIAS, CLIENTE AVISADO?, AND. NECESSÁRIO, SITU. EMPRESA) não se abre conferência, por
 decisão de projeto: são os campos que a equipe edita hoje só lá.
 
-## As 3.300 conferências, por tipo
+## As 4.342 conferências, por tipo
 
 | tipo | linhas | o que é |
 |---|---:|---|
-| DIVERGENCIA_FONTE | 2.920 | a tabela acima |
-| VALOR_SEM_TRADUCAO | 241 | 101 rescisão · 69 STATUS EXECUÇÃO (45 poluídos + 24 na coluna errada e incoerentes com a fase) · 66 "EXECUÇÃO" sem qualificação · 2 sucumbência fora do art. 791-A · 2 testemunhas sem nome · 1 valor implausível |
+| DIVERGENCIA_FONTE | 3.445 | a tabela acima (2.917) + 423 EMPRESA (reclamadas diferentes nas duas fontes) + 79 DATA REVOG com REVOGAÇÃO = NÃO + 14 SITU. EMPRESA + 8 CumPrSe × STATUS EXECUÇÃO + 1 CumPrSe × fase + 3 da PRÉ |
+| VALOR_SEM_TRADUCAO | 308 | 101 rescisão · 69 STATUS EXECUÇÃO · 66 "EXECUÇÃO" sem qualificação · 58 sem fase nem status (entraram em CONHECIMENTO) · 9 acordos sem STATUS ACORDO · 2 sucumbência · 2 testemunhas sem nome · 1 valor implausível |
+| AUDIENCIA_SEM_RESULTADO | 279 | audiência passada sem decisão, acordo, encerramento ou instrução posterior: REALIZADA a confirmar |
+| EMPRESA_AMBIGUA | 171 | 112 empresas com mais de um CNPJ nos processos + 59 CNPJs em mais de um cadastro |
 | SEM_NUMERO | 106 | registros da PROCESSUAL sem CNJ: entraram como processo próprio |
 | CNJ_DUPLICADO | 25 | 19 na CÓPIA, 6 na PROCESSUAL: cada um virou um processo |
 | FORA_DO_ESCOPO | 3 | os `INAPLICÁVEL` |
@@ -219,7 +256,7 @@ carga real trouxe:
 ```bash
 export GGV_SUPABASE_TRAB=...                 # a URI do Postgres do PrevGGVLucas
 ./.venv/bin/python migrar.py --recriar       # apaga o public e refaz: esquema + governança + carga
-./.venv/bin/python conferir.py               # 182 linhas, TUDO CONFERE
+./.venv/bin/python conferir.py               # 249 linhas, TUDO CONFERE
 ```
 
 Antes: a cópia externa (pg_dump) do `prev_2026_09`, como manda o `CLAUDE.md`. `--recriar` apaga o

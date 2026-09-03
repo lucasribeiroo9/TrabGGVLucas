@@ -56,8 +56,13 @@ GRUPO_DA_ETAPA = {
     "Atendimento":  "Atendimento/Entrevista",
     "Documentação": "Documentação",
     "Jurídico":     "Jurídico/Processual",
-    "Gestão":       "Petição Inicial",   # [CONFIRMAR] resposta 8: quem aprova a
-                                         # inicial é a equipe de Petição Inicial
+    # A aprovação da inicial JÁ é da etapa de grupo "Petição Inicial" em
+    # governanca.sql (resposta 8, implementada em 03/09/2026: papel ADVOGADO +
+    # gate setor_peticao_inicial). "Gestão" só sobra em PRAZO → PERDIDO, que é
+    # registro de quem gere o escritório. [CONFIRMAR pergunta 30: qual setor
+    # da lista responde por isso — Direção?]
+    "Gestão":       "Direção",
+    "Petição Inicial": "Petição Inicial",
     "Financeiro":   "Financeiro",
     "Direção":      "Direção",
 }

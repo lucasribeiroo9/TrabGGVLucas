@@ -112,15 +112,15 @@ Governa `clientes.status` · 12 etapas · 43 transições.
 |---|---|
 | tipo | INTERMEDIARIA |
 | prazo interno (SLA) | 2 dias |
-| setor responsável | Gestão |
+| setor responsável | Petição Inicial |
 
-**O que fazer aqui:** A minuta espera quem aprova. Aprove ou devolva com o ajuste escrito. Este é o gargalo do funil hoje.
+**O que fazer aqui:** A minuta espera o advogado da equipe de Petição Inicial (resposta 8 do Lucas: existe um setor próprio para cada etapa, e quem aprova a inicial é essa equipe — não a Gestão). Aprove ou devolva com o ajuste escrito. Este é o gargalo do funil hoje.
 
 | vai para | ação | quem pode | exige | por que trava |
 |---|---|---|---|---|
-| **Cancelado** (`CANCELADO`) | Cancelar | GESTOR | motivo | Escreva o motivo no campo desta janela. Mudança sem motivo não deixa rastro para quem vier depois. |
-| **Petição aprovada, a distribuir** (`PETICAO_APROVADA`) | Aprovar a inicial | GESTOR | minuta_anexada | Anexe a minuta da inicial na ficha. Não se aprova o que não está escrito. |
-| **Petição em redação** (`PETICAO_EM_CRIACAO`) | Devolver para ajuste | GESTOR | motivo | Escreva o motivo no campo desta janela. Mudança sem motivo não deixa rastro para quem vier depois. |
+| **Cancelado** (`CANCELADO`) | Cancelar | ADVOGADO | setor_peticao_inicial,motivo | Aprovar, devolver ou cancelar a inicial é da equipe de Petição Inicial: só quem está nesse setor (pessoas.setor) tem a ação. Para aprovar, a minuta precisa estar anexada; para devolver ou cancelar, o motivo escrito. |
+| **Petição aprovada, a distribuir** (`PETICAO_APROVADA`) | Aprovar a inicial | ADVOGADO | setor_peticao_inicial,minuta_anexada | Aprovar, devolver ou cancelar a inicial é da equipe de Petição Inicial: só quem está nesse setor (pessoas.setor) tem a ação. Para aprovar, a minuta precisa estar anexada; para devolver ou cancelar, o motivo escrito. |
+| **Petição em redação** (`PETICAO_EM_CRIACAO`) | Devolver para ajuste | ADVOGADO | setor_peticao_inicial,motivo | Aprovar, devolver ou cancelar a inicial é da equipe de Petição Inicial: só quem está nesse setor (pessoas.setor) tem a ação. Para aprovar, a minuta precisa estar anexada; para devolver ou cancelar, o motivo escrito. |
 
 ### 7. Petição aprovada, a distribuir — `PETICAO_APROVADA`
 

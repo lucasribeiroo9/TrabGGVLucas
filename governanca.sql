@@ -106,8 +106,8 @@ INSERT INTO fluxo_etapas (fluxo_id, codigo, nome, ordem, tipo, sla_dias, grupo, 
   'Caso pronto para a inicial, ainda sem redator. Assuma ou distribua. Se a saída foi rescisão indireta, este caso tem prioridade: o contrato ainda está correndo.'),
  (1,'PETICAO_EM_CRIACAO','Petição em redação',5,'INTERMEDIARIA',3,'Jurídico',
   'Redija a inicial. Se faltar informação, volte para entrevista; se faltar documento, para documentação — sem apagar o que já foi feito.'),
- (1,'PETICAO_AGUARDANDO_APROVACAO','Petição aguardando aprovação',6,'INTERMEDIARIA',2,'Gestão',
-  'A minuta espera quem aprova. Aprove ou devolva com o ajuste escrito. Este é o gargalo do funil hoje.'),
+ (1,'PETICAO_AGUARDANDO_APROVACAO','Petição aguardando aprovação',6,'INTERMEDIARIA',2,'Petição Inicial',
+  'A minuta espera o advogado da equipe de Petição Inicial (resposta 8 do Lucas: existe um setor próprio para cada etapa, e quem aprova a inicial é essa equipe — não a Gestão). Aprove ou devolva com o ajuste escrito. Este é o gargalo do funil hoje.'),
  (1,'PETICAO_APROVADA','Petição aprovada, a distribuir',7,'INTERMEDIARIA',2,'Jurídico',
   'Protocole no PJe e registre o número CNJ. É o registro do número que faz nascer o processo no sistema.'),
  (1,'STAND_BY','Stand by',8,'INTERMEDIARIA',60,'Atendimento',
@@ -146,9 +146,14 @@ INSERT INTO fluxo_transicoes (fluxo_id, de, para, acao, papel, exige) VALUES
  (1,'PETICAO_EM_CRIACAO','DOCUMENTACAO','Falta documento',NULL,'motivo'),
  (1,'PETICAO_EM_CRIACAO','CANCELADO','Cancelar',NULL,'motivo'),
  (1,'PETICAO_EM_CRIACAO','PRESCRITO','Prescrição consumada','ADVOGADO','motivo'),
- (1,'PETICAO_AGUARDANDO_APROVACAO','PETICAO_APROVADA','Aprovar a inicial','GESTOR','minuta_anexada'),
- (1,'PETICAO_AGUARDANDO_APROVACAO','PETICAO_EM_CRIACAO','Devolver para ajuste','GESTOR','motivo'),
- (1,'PETICAO_AGUARDANDO_APROVACAO','CANCELADO','Cancelar','GESTOR','motivo'),
+ -- Quem aprova é o ADVOGADO da equipe de Petição Inicial (resposta 8): o papel é
+ -- ADVOGADO e o gate `setor_peticao_inicial` confere, no banco, que a pessoa
+ -- logada pertence a esse setor (pessoas.setor = 'Petição Inicial'; função
+ -- pessoa_no_setor, abaixo). Gestor e Direção NÃO aprovam por hierarquia:
+ -- é setor, não cargo. [CONFIRMAR: a Direção também pode aprovar?]
+ (1,'PETICAO_AGUARDANDO_APROVACAO','PETICAO_APROVADA','Aprovar a inicial','ADVOGADO','setor_peticao_inicial,minuta_anexada'),
+ (1,'PETICAO_AGUARDANDO_APROVACAO','PETICAO_EM_CRIACAO','Devolver para ajuste','ADVOGADO','setor_peticao_inicial,motivo'),
+ (1,'PETICAO_AGUARDANDO_APROVACAO','CANCELADO','Cancelar','ADVOGADO','setor_peticao_inicial,motivo'),
  (1,'PETICAO_APROVADA','DISTRIBUIDO','Registrar distribuição','ADVOGADO','numero_cnj,prescricao_viva'),
  (1,'PETICAO_APROVADA','PETICAO_EM_CRIACAO','Reabrir redação','ADVOGADO','motivo'),
  (1,'PETICAO_APROVADA','CANCELADO','Cancelar','ADVOGADO','motivo'),
@@ -423,6 +428,7 @@ INSERT INTO fluxo_transicoes (fluxo_id, de, para, acao, papel, exige) VALUES
 -- tela junta as razões técnicas (fluxo.py) de qualquer jeito.
 -- ---------------------------------------------------------------------
 UPDATE fluxo_transicoes SET texto_bloqueio = CASE
+  WHEN exige LIKE 'setor_peticao_inicial%' THEN 'Aprovar, devolver ou cancelar a inicial é da equipe de Petição Inicial: só quem está nesse setor (pessoas.setor) tem a ação. Para aprovar, a minuta precisa estar anexada; para devolver ou cancelar, o motivo escrito.'
   WHEN exige = 'motivo' THEN 'Escreva o motivo no campo desta janela. Mudança sem motivo não deixa rastro para quem vier depois.'
   WHEN exige = 'contrato_assinado' THEN 'Falta o contrato de honorários e a procuração assinados, com data. Sem eles o escritório não representa ninguém.'
   WHEN exige = 'documentos_obrigatorios' THEN 'Ainda falta documento obrigatório (TRCT, CTPS, RG/CNH). Marque cada um como recebido ou dispensado, com motivo.'
@@ -578,6 +584,16 @@ BEGIN
 END $$;
 DROP TRIGGER IF EXISTS tg_gov_prescricao_bienal ON processos;
 CREATE TRIGGER tg_gov_prescricao_bienal BEFORE INSERT ON processos FOR EACH ROW EXECUTE FUNCTION gov_prescricao_bienal();
+
+-- A pessoa pertence ao setor? É o que o gate `setor_peticao_inicial` de
+-- fluxo.py pergunta (resposta 8: quem aprova a inicial é a equipe de Petição
+-- Inicial). Fica como função para a regra ser verificável no psql, sem tela:
+--   SELECT pessoa_no_setor(7, 'Petição Inicial');
+-- Setor vem de pessoas.setor, preenchido por equipe.py (pergunta 30).
+CREATE OR REPLACE FUNCTION pessoa_no_setor(p_pessoa BIGINT, p_setor TEXT) RETURNS boolean
+LANGUAGE sql STABLE SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM pessoas WHERE id = p_pessoa AND ativo AND setor = p_setor);
+$$;
 
 -- ---------------------------------------------------------------------
 -- VISÕES DE GOVERNANÇA (o número na tela sai daqui, nunca do template)

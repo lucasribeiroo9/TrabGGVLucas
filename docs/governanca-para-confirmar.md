@@ -43,8 +43,8 @@ stateDiagram-v2
     PETICAO_EM_CRIACAO --> PETICAO_AGUARDANDO_APROVACAO : minuta anexada 🔒
     PETICAO_EM_CRIACAO --> ENTREVISTA : falta informação
     PETICAO_EM_CRIACAO --> DOCUMENTACAO : falta documento
-    PETICAO_AGUARDANDO_APROVACAO --> PETICAO_APROVADA : aprovar (GESTOR) 🔒
-    PETICAO_AGUARDANDO_APROVACAO --> PETICAO_EM_CRIACAO : devolver (GESTOR)
+    PETICAO_AGUARDANDO_APROVACAO --> PETICAO_APROVADA : aprovar (advogado da equipe de Petição Inicial) 🔒
+    PETICAO_AGUARDANDO_APROVACAO --> PETICAO_EM_CRIACAO : devolver (advogado da equipe de Petição Inicial)
     PETICAO_APROVADA --> DISTRIBUIDO : nº CNJ + prescrição viva (ADVOGADO) 🔒
     PETICAO_APROVADA --> PETICAO_EM_CRIACAO : reabrir redação
     LEAD --> STAND_BY
@@ -90,7 +90,7 @@ stateDiagram-v2
 | **ENTREVISTA** | Agendar e fazer a entrevista; registrar data, entrevistador, resumo, se o caso pede perícia médica ou técnica, e as testemunhas. Os "1º/2º/3º contato" viraram um **contador** na ficha, não etapas — três estados que só diziam "quantas vezes liguei" e que ninguém usava (2 registros em 797). "Entrevista agendada" e "remarcar" são o evento na agenda. | Atendimento (entrevistadores) | 5 dias | PETICAO_PENDENTE, DOCUMENTACAO, STAND_BY, SEM_RESPOSTA, CANCELADO, PRESCRITO | Para seguir, **entrevista registrada** (data + resumo). Hoje o resumo só existe em 51 fichas **[CONFIRMAR 9]**: onde fica o conteúdo? |
 | **PETICAO_PENDENTE** | Caso pronto para a inicial, ainda sem redator. Rescisão indireta aparece em vermelho aqui. | Jurídico | 2 dias | PETICAO_EM_CRIACAO, STAND_BY, CANCELADO, PRESCRITO | — |
 | **PETICAO_EM_CRIACAO** | Alguém está redigindo. Se faltar informação volta para entrevista; se faltar documento, para documentação — sem apagar o feito. | Jurídico | 3 dias | PETICAO_AGUARDANDO_APROVACAO, ENTREVISTA, DOCUMENTACAO, CANCELADO, PRESCRITO | Para enviar à aprovação, a **minuta anexada** na ficha. |
-| **PETICAO_AGUARDANDO_APROVACAO** | A minuta espera quem aprova. **É o gargalo de hoje: 54 esperando contra 6 em redação.** Por isso virou etapa própria, com dono e SLA curto. | Gestão **[CONFIRMAR 8]**: quem aprova? | 2 dias | PETICAO_APROVADA, PETICAO_EM_CRIACAO (devolver), CANCELADO | Aprovar e devolver exigem papel **GESTOR**; devolver exige o ajuste escrito. |
+| **PETICAO_AGUARDANDO_APROVACAO** | A minuta espera quem aprova. **É o gargalo de hoje: 54 esperando contra 6 em redação.** Por isso virou etapa própria, com dono e SLA curto. | **Petição Inicial** (resposta 8, 03/09/2026) | 2 dias | PETICAO_APROVADA, PETICAO_EM_CRIACAO (devolver), CANCELADO | Aprovar, devolver e cancelar exigem papel **ADVOGADO** e pertencer ao setor **Petição Inicial** (gate `setor_peticao_inicial`, que lê `pessoas.setor`; no banco, `pessoa_no_setor(id, 'Petição Inicial')`). Devolver exige o ajuste escrito. Gestor e Direção não aprovam por hierarquia [CONFIRMAR: a Direção também pode?]. |
 | **PETICAO_APROVADA** | Protocolar no PJe e registrar o número CNJ. É esse registro que **faz nascer o processo** no sistema (fluxo 2), copiando tudo — e não só nome, telefone e empresa como a automação de hoje. | Jurídico (advogado) | 2 dias | DISTRIBUIDO, PETICAO_EM_CRIACAO, CANCELADO, PRESCRITO | **Número CNJ de 20 dígitos** e **prescrição viva**: se a demissão faz mais de 2 anos, o sistema não distribui sem uma dispensa justificada escrita na ficha (contrato vivo, causa interruptiva, decisão consciente de arriscar). |
 | **STAND_BY** | Parado por decisão da pessoa ou fato que vai amadurecer. A prescrição continua correndo, e a tela mostra. | Atendimento | 60 dias | DOCUMENTACAO, ENTREVISTA, PETICAO_PENDENTE, SEM_RESPOSTA, CANCELADO, PRESCRITO | — |
 | **DISTRIBUIDO** (final) | A inicial foi distribuída. O trabalho segue no processo. Equivale ao CONCLUÍDO do Airtable, com nome que diz o que aconteceu. | Jurídico | — | DOCUMENTACAO (novo caso da mesma pessoa, com motivo) | — |
@@ -428,7 +428,8 @@ tarefa com dono.
 13. **Padrões de prazo quando o juízo fixa**: réplica 5, documentos 5, razões finais 5, laudo 15, emenda 15,
     execução 5. São `dias_padrao` em `prazo_tipos`; a pessoa corrige na tela.
 14. **Setores** usados no mapa: Captação, Documentação, Atendimento (entrevistadores e responsáveis
-    iniciais), Jurídico, Gestão (quem aprova), Financeiro, Direção, Publicação. A base só tem FUNCOES
+    iniciais), Jurídico, Petição Inicial (quem aprova a inicial — resposta 8), Gestão (prazo perdido),
+    Financeiro, Direção, Publicação. A base só tem FUNCOES
     **[CONFIRMAR 30]**; `equipe.py` traduz.
 15. **Dois gatilhos além do mapa**: prescrição bienal barra o INSERT do processo sem dispensa
     (`gov_prescricao_bienal`); prazo em dias corridos sem justificativa, CUMPRIDO sem data e PERDIDO sem
@@ -444,7 +445,7 @@ tarefa com dono.
 | 5 (leads) | etapa LEAD fica ou sai; se sai, o fluxo começa em DOCUMENTACAO com `contrato_assinado` no INSERT |
 | 6 (SLA 15/20) | os SLAs das seis etapas do pré e o farol da view |
 | 7 (PENDENCIAS) | como migrar 551 fichas para `documentos_pendentes` — e se o gate `documentos_obrigatorios` fecha as 172 COMPLETAS com 4 marcações |
-| 8 (quem aprova) | o papel da transição AGUARDANDO_APROVACAO → APROVADA (GESTOR hoje) |
+| 8 (quem aprova) | **respondida e implementada**: papel ADVOGADO + gate `setor_peticao_inicial` na transição AGUARDANDO_APROVACAO → APROVADA / EM_CRIACAO / CANCELADO; grupo da etapa = Petição Inicial. Depende de `pessoas.setor` (pergunta 30) |
 | 9 (entrevista) | modalidade como atributo do evento; se o resumo fica no Drive, o gate `entrevista_registrada` aceita link |
 | 10 (RI 15 dias) | o farol da RI e para quem nasce a tarefa no 15º dia |
 | 11 (prescrição) | se a quinquenal entra como cálculo do período alcançado na ficha |

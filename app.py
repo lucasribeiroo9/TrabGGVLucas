@@ -477,7 +477,7 @@ async def cliente(req: Request):
         trilha=fluxo.trilha(db, "clientes"),
         etapa_agora=db.execute("""SELECT * FROM fluxo_etapas WHERE fluxo_id=1 AND codigo=?""",
                                (c["status"],)).fetchone(),
-        transicoes=fluxo.transicoes(db, "clientes", cid, u["papel"]),
+        transicoes=fluxo.transicoes(db, "clientes", cid, u["papel"], pessoa_id=_eu(db, u)),
         percorridas=fluxo.percorridas(db, "clientes", cid),
         pendencias=fluxo.pendencias_abertas(db, cliente_id=cid),
         resolvidas=db.execute("""SELECT p.*, pe.nome responsavel FROM pendencias p
@@ -753,7 +753,7 @@ async def processo(req: Request):
         trilha=fluxo.trilha(db, "processos"),
         etapa_agora=db.execute("SELECT * FROM fluxo_etapas WHERE fluxo_id=2 AND codigo=?",
                                (pr["fase"],)).fetchone(),
-        transicoes=fluxo.transicoes(db, "processos", pid, u["papel"]),
+        transicoes=fluxo.transicoes(db, "processos", pid, u["papel"], pessoa_id=_eu(db, u)),
         percorridas=fluxo.percorridas(db, "processos", pid),
         audiencias=db.execute("""SELECT a.*, fe.nome situacao_nome, pe.nome responsavel
              FROM audiencias a
@@ -1005,7 +1005,7 @@ async def audiencia(req: Request):
         trilha=fluxo.trilha(db, "audiencias"),
         etapa_agora=db.execute("SELECT * FROM fluxo_etapas WHERE fluxo_id=3 AND codigo=?",
                                (a["situacao"],)).fetchone(),
-        transicoes=fluxo.transicoes(db, "audiencias", aid, u["papel"]),
+        transicoes=fluxo.transicoes(db, "audiencias", aid, u["papel"], pessoa_id=_eu(db, u)),
         percorridas=fluxo.percorridas(db, "audiencias", aid),
         testemunhas=db.execute("""SELECT t.*, v.intimacao_pedida_em FROM testemunhas t
              JOIN testemunha_vinculos v ON v.testemunha_id = t.id

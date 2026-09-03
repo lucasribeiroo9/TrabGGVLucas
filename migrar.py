@@ -30,9 +30,23 @@ primeiro, porque em Linux não existe Keychain.
    `origem = 'MIGRACAO'`, para a ficha não nascer sem passado.
 
 O que a migração PRESERVA entre execuções (não se apaga trabalho humano):
-contas de acesso (`usuarios`), a configuração das automações (`automacoes`) e o
-que já foi decidido em `conferencias` — dono, situação e anotação, recasados
-pela `chave`.
+contas de acesso (`usuarios` — mesmo id, mesmo hash de senha, mesmo papel,
+recasadas com a pessoa pelo record do Airtable; vale também com `--recriar`),
+a configuração das automações (`automacoes`, que a carga não toca) e o que já
+foi decidido em `conferencias` — dono, situação e anotação, recasados pela
+`chave`. O que nasce no portal e NÃO sobrevive a uma recarga: prazos,
+petições, repasses e parcelas — a carga é para antes de o portal entrar em
+uso; depois dela, recarregar exige cópia (pg_dump) antes.
+
+## O que a carga NÃO inventa
+
+Campo sem fonte fica NULL e a tela mostra vazio (regra 3 da casa). A carga não
+grava data de homologação, de notificação, de trânsito, de arquivamento nem de
+confirmação de testemunha que a origem não tem; o FATO fica onde cabe (situação
+da execução, booleano, situação do incidente) e a data fica em branco. O
+histórico de etapas recebe a melhor data que a origem oferece e, na falta,
+a criação do registro no Airtable — nunca a data da carga. O "hoje" da carga
+é `data_referencia()`: a data em que a origem foi lida, gravada no dump.
 """
 import argparse
 import json
@@ -111,6 +125,20 @@ def baixar(so_estas=None):
 
 
 _avisou_amostra = set()
+
+
+def data_referencia():
+    """O 'hoje' da carga: a data em que a origem foi lida (`baixado_em` do
+    dump da CÓPIA). Audiência anterior a ela é passado; histórico não pode ser
+    posterior a ela. Sai do dump, não do relógio, para `migrar.py` e
+    `conferir.py` concordarem mesmo rodando em dias diferentes."""
+    caminho = os.path.join(DADOS, "copia.json")
+    if not os.path.exists(caminho):
+        return time.strftime("%Y-%m-%d")
+    with open(caminho) as f:
+        cabeca = f.read(400)
+    m = re.search(r'"baixado_em":\s*"(\d{4}-\d{2}-\d{2})', cabeca)
+    return m.group(1) if m else time.strftime("%Y-%m-%d")
 
 
 def ler(nome):
@@ -243,18 +271,45 @@ class Banco:
         for t in self.GOVERNADAS:
             self.executar("ALTER TABLE %s %s TRIGGER USER" % (t, "ENABLE" if ligada else "DISABLE"))
 
+    def guardar(self):
+        """O que gente decidiu e a carga não pode apagar. Lê ANTES de limpar.
+
+        `usuarios` referencia `pessoas`, e o TRUNCATE de `pessoas` é CASCADE:
+        sem guardar aqui, a recarga apagava TODAS as contas de acesso (provado
+        pelo Auditor: 37 → 0). A pessoa de cada conta é recasada pelo record
+        do Airtable, porque o id de `pessoas` muda a cada carga. O mesmo vale
+        para o dono e quem resolveu cada conferência decidida.
+        """
+        g = {"conferencias": {}, "usuarios": []}
+        if self.arquivo or self.con is None:
+            return g
+        try:
+            for linha in self.consultar(
+                    "SELECT c.chave, c.situacao, c.dono_id, c.anotacao, c.resolvido_em, "
+                    "c.resolvido_por, d.airtable_record_id, r.airtable_record_id "
+                    "FROM conferencias c LEFT JOIN pessoas d ON d.id = c.dono_id "
+                    "LEFT JOIN pessoas r ON r.id = c.resolvido_por WHERE c.situacao <> 'ABERTA'"):
+                g["conferencias"][linha[0]] = linha
+            for linha in self.consultar(
+                    "SELECT u.id, u.email, u.senha_hash, u.papel, u.ativo, u.trocar_senha, "
+                    "u.ultimo_acesso, u.criado_em, p.airtable_record_id, p.nome_norm "
+                    "FROM usuarios u LEFT JOIN pessoas p ON p.id = u.pessoa_id ORDER BY u.id"):
+                g["usuarios"].append(linha)
+        except Exception:
+            # banco ainda sem as tabelas (primeira carga): não há o que guardar
+            self.con.rollback()
+        return g
+
     def limpar(self):
         """Apaga o que a migração escreve e PRESERVA o que gente decidiu."""
-        guardadas = self.consultar(
-            "SELECT chave, situacao, dono_id, anotacao, resolvido_em, resolvido_por "
-            "FROM conferencias WHERE situacao <> 'ABERTA'") or []
+        guardadas = self.guardar()
         self.executar("""TRUNCATE processo_alias, testemunha_vinculos, testemunha_auditoria,
             pendencias, peticoes, anotacoes, contatos, eventos, tarefas, documentos,
             acordo_parcelas, acordos, calculos, recebimentos, repasses, decisoes, recursos,
             pericias, prazos, audiencias, incidentes, conferencia_faltantes, processos,
             clientes, testemunhas, fragilidades, empresas, pessoa_papeis, pessoas,
             conferencias, automacao_log, historico_etapas, auditoria RESTART IDENTITY CASCADE""")
-        return {g[0]: g for g in guardadas}
+        return guardadas
 
     def acertar_sequencias(self):
         """Sem isto, a PRIMEIRA linha que o sistema criar depois da migração
@@ -309,7 +364,17 @@ class Migracao:
         self.processo = {}
         self.processo_por_cnj = {}         # dígitos do CNJ → id do PRIMEIRO processo com ele
         self.testemunha = {}
-        self.hist = []                     # (entidade, id, etapa)
+        self.pessoa_por_nome = {}          # nome_norm → id (recasa conta cuja pessoa mudou de record)
+        self.empresa_nome = {}             # record → nome
+        self.empresa_situacao = {}         # record → situação traduzida
+        self.empresa_cnpj = defaultdict(lambda: defaultdict(int))   # id → {cnpj: n}
+        self.empresa_razao = defaultdict(lambda: defaultdict(int))  # (id, cnpj) → {razão: n}
+        self.cliente_assinatura = {}       # id → data (o que a ficha já tem)
+        self.cliente_nascimento = {}
+        self.cliente_origem = {}           # id → (origem, record)
+        self.distribuicao_do_cliente = {}  # id → a menor DISTRIBUIÇAO dos processos dele
+        self.hoje = data_referencia()
+        self.hist = []                     # dicts: entidade, id, etapa, candidatos, criado
 
     # ---------------------------------------------------------- conferências
     def anotar(self, av, entidade, entidade_id=None, rec=None, origem_a=None,
@@ -327,6 +392,49 @@ class Migracao:
     def _corta(self, registros):
         return registros[:self.amostra] if self.amostra else registros
 
+    # ---------------------------------------------------------- o histórico
+    def _h(self, entidade, eid, etapa, candidatos=(), criado=None):
+        """Anota a etapa migrada e as datas que a origem oferece para ela."""
+        self.hist.append(dict(entidade=entidade, id=eid, etapa=etapa,
+                              candidatos=list(candidatos), criado=criado))
+
+    def quando(self, candidatos, criado):
+        """A melhor data que a origem oferece para a etapa atual — e o motivo.
+
+        Percorre os candidatos na ordem dada (o mais próximo da entrada na
+        etapa primeiro). Sem nenhum, vale a criação do registro no Airtable,
+        dita como tal. NUNCA a data da carga: foi ela que zerou o SLA de 10.183
+        registros — `v_estagnados` devolvia 0 linhas para 3.855 processos.
+        """
+        for rotulo, valor in candidatos:
+            d = data_iso(valor)
+            if d and "1990-01-01" <= d <= self.hoje:
+                return d, "carga inicial do Airtable — data de %s" % rotulo
+        d = data_iso(criado)
+        if d and d <= self.hoje:
+            return d, ("carga inicial do Airtable — a origem não tem a data desta etapa: "
+                       "usada a criação do registro no Airtable")
+        return self.hoje, ("carga inicial do Airtable — sem data na origem nem criação do "
+                           "registro: data em que a origem foi lida")
+
+    def restaurar_usuarios(self, guardadas):
+        """As contas voltam como estavam: mesmo id, mesmo hash de senha, mesmo
+        papel. A pessoa é recasada pelo record do Airtable (ou pelo nome, se o
+        record mudou); quem saiu da origem fica com a conta sem pessoa — não
+        sem conta."""
+        n = 0
+        for (uid, email, senha_hash, papel, ativo, trocar, ultimo, criado, rec,
+             nome_norm) in guardadas.get("usuarios", []):
+            pid = self.pessoa.get(rec) or self.pessoa_por_nome.get(nome_norm)
+            self.bd.executar(
+                "INSERT INTO usuarios (id, pessoa_id, email, senha_hash, papel, ativo, "
+                "trocar_senha, ultimo_acesso, criado_em) OVERRIDING SYSTEM VALUE "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (uid, pid, email, senha_hash, papel, ativo, trocar, ultimo, criado))
+            n += 1
+        if n:
+            self.bd.conta["usuarios (preservados)"] = n
+
     # ---------------------------------------------------------- 1. a equipe
     def equipe(self):
         for r in self._corta(ler("funcionarios")):
@@ -342,6 +450,7 @@ class Migracao:
                 ntfy_ativo=(norm(campo(f, "ntfy_ativo")) == "ATIVO") if campo(f, "ntfy_ativo") else None,
                 airtable_record_id=r["id"], airtable_tabela="FUNCIONARIOS", airtable_bruto=f))
             self.pessoa[r["id"]] = pid
+            self.pessoa_por_nome[norm(nome)] = pid
             for p in (campo(f, "FUNCOES") or []):
                 papel = N.PAPEL.get(p)
                 if papel:
@@ -366,6 +475,8 @@ class Migracao:
                 ggv_record_key=txt(campo(f, "GGV_RECORD_KEY")),
                 airtable_record_id=r["id"], airtable_tabela="EMPRESAS", airtable_bruto=f))
             self.empresa[r["id"]] = eid
+            self.empresa_nome[r["id"]] = nome
+            self.empresa_situacao[r["id"]] = sit
             self.anotar(av, "empresas", eid, r["id"])
 
     def fragilidades(self):
@@ -480,7 +591,10 @@ class Migracao:
                 criado_em=datahora_iso(campo(f, "Created")),
                 airtable_record_id=r["id"], airtable_tabela="PRE PROCESSUAL", airtable_bruto=f))
             self.cliente[r["id"]] = cid
-            self.hist.append(("clientes", cid, etapa))
+            self._h("clientes", cid, etapa, self.candidatos_cliente(etapa, f), r.get("createdTime"))
+            self.cliente_assinatura[cid] = data_iso(campo(f, "DATA DE ASSINATURA"))
+            self.cliente_nascimento[cid] = data_iso(campo(f, "NASCIMENTO"))
+            self.cliente_origem[cid] = ("PRE PROCESSUAL", r["id"])
             if cpf and cpf_valido(cpf):
                 self.cliente_por_cpf.setdefault(cpf, cid)
             self.cliente_por_nome[norm(nome)].append(cid)
@@ -520,6 +634,54 @@ class Migracao:
                                                   origem="MIGRACAO", campo_origem="AVISOS"))
             self.disparos(f, r["id"], cliente_id=cid)
             self.notificacao_n8n(f, r["id"], cid)
+
+    @staticmethod
+    def candidatos_cliente(etapa, f):
+        """As datas que a origem oferece para a etapa atual da ficha, da mais
+        próxima da entrada na etapa para a mais distante. DISTRIBUIDO ganha,
+        em `historico()`, a DISTRIBUIÇAO do processo — que só se conhece
+        depois de carregar os processos. As saídas (cancelado, prescrito,
+        stand by, sem resposta) não têm data na origem: vale a criação."""
+        assinatura = ("DATA DE ASSINATURA", campo(f, "DATA DE ASSINATURA"))
+        entrevista = ("DATA ENTREVISTA", campo(f, "DATA ENTREVISTA"))
+        if etapa in ("LEAD", "DOCUMENTACAO", "ENTREVISTA"):
+            return [assinatura]
+        if etapa.startswith("PETICAO") or etapa == "DISTRIBUIDO":
+            return [entrevista, assinatura]
+        return []
+
+    def cadastro_incompleto(self):
+        """O que a ficha ainda não tem e a origem — PRÉ, CÓPIA ou PROCESSUAL —
+        também não tinha: pendência com tipo, não conferência genérica. Sem
+        data de assinatura, o contrato de honorários não está registrado
+        (DOCUMENTO/CONTRATO, obrigatório). Sem nascimento, é dado de cadastro
+        (CADASTRO). Roda DEPOIS dos processos, porque a CÓPIA completa a ficha
+        da PRÉ: 1.556 fichas dos autos nasciam sem assinatura tendo-a nos autos."""
+        for cid, (origem, rec) in self.cliente_origem.items():
+            if not self.cliente_assinatura.get(cid):
+                self.bd.inserir("pendencias", dict(
+                    cliente_id=cid, tipo="DOCUMENTO", documento_tipo="CONTRATO", obrigatorio=True,
+                    descricao="contrato de honorários: sem data de assinatura na origem (%s)" % origem,
+                    origem="MIGRACAO", grupo="Documentação", airtable_record_id=rec))
+            if not self.cliente_nascimento.get(cid):
+                self.bd.inserir("pendencias", dict(
+                    cliente_id=cid, tipo="CADASTRO", obrigatorio=False,
+                    descricao="data de nascimento: não consta na origem (%s)" % origem,
+                    origem="MIGRACAO", grupo="Documentação", airtable_record_id=rec))
+
+    def completar_ficha(self, cid, fc, fp):
+        """A CÓPIA (e a PROCESSUAL) completam o que a ficha não tinha: data de
+        assinatura e nascimento. Só onde está vazio — a PRÉ, quando tem, vence."""
+        v = lambda nome: self.valor(fc, fp, nome)                          # noqa: E731
+        assinatura = data_iso(v("ASSINATURA"))
+        nasc, _ = data_br(v("NASCIMENTO"), "nascimento_parte")
+        if assinatura and not self.cliente_assinatura.get(cid):
+            self.bd.executar("UPDATE clientes SET data_assinatura_contrato=%s WHERE id=%s",
+                             (assinatura, cid))
+            self.cliente_assinatura[cid] = assinatura
+        if nasc and not self.cliente_nascimento.get(cid):
+            self.bd.executar("UPDATE clientes SET data_nascimento=%s WHERE id=%s", (nasc, cid))
+            self.cliente_nascimento[cid] = nasc
 
     # ---------------------------------------------------------- 4. os processos
     @staticmethod
@@ -578,7 +740,7 @@ class Migracao:
                         "CLIENTE AVISADO?", "AND. NECESSÁRIO", "SITU. EMPRESA")
     # os campos cuja divergência entre as duas é relevante e vira conferência
     CONFERE = ("FASE PROCESSUAL", "STATUS DO PROCESSO", "NOME", "VARA", "VALOR",
-               "DECISAO SENTENCA", "ENCERRAMENTO", "STATUS ACORDO")
+               "DECISAO SENTENCA", "ENCERRAMENTO", "STATUS ACORDO", "EMPRESA")
 
     def valor(self, copia, proc, nome):
         """De qual lado sai o valor deste campo, e a divergência que sobra."""
@@ -610,9 +772,15 @@ class Migracao:
             avisos.append(aviso("FORA_DO_ESCOPO", "fase", "INAPLICÁVEL",
                                 "marcado como inaplicável na origem: não é processo trabalhista nosso"))
             return None, None, None, None, avisos
+        st, _ = N._traduz(N.STATUS_PROCESSO, st_proc, "fase")
+        if not fase and not (st and st[0] in ("FASE", "RESULTADO")):
+            # 58 registros só da PROCESSUAL, sem número, sem fase e sem status:
+            # entram na etapa inicial, mas isso é decisão da carga, e fica dito
+            avisos.append(aviso("VALOR_SEM_TRADUCAO", "fase", "(vazio)",
+                                "sem FASE PROCESSUAL e sem STATUS DO PROCESSO que diga a fase: "
+                                "entrou em CONHECIMENTO, a etapa inicial [CONFIRMAR]"))
         fase = fase or "CONHECIMENTO"
         resultado_final = incidente_situacao = None
-        st, _ = N._traduz(N.STATUS_PROCESSO, st_proc, "fase")
         if st:
             destino, valor_st = st
             if destino == "FASE" and valor_st == "SOBRESTADO":
@@ -621,7 +789,151 @@ class Migracao:
                 resultado_final, fase = valor_st, "ENCERRADO"
             elif destino == "INCIDENTE":
                 incidente_situacao = valor_st
+        # AUSÊNCIA do reclamante arquiva (art. 844 CLT): o processo encerrado por
+        # ausência ganha o resultado que diz isso — é perda evitável e precisa
+        # ser medida. Onde a fase discorda, ninguém encerra em silêncio.
+        st_conh = N.STATUS_CONHECIMENTO.get(v("STATUS CONHECIMENTO")) or (None, None)
+        if st_conh[0] == "AUSENCIA":
+            if fase == "ENCERRADO" and resultado_final in (None, "ARQUIVADO"):
+                resultado_final = st_conh[1]
+            else:
+                avisos.append(aviso("DIVERGENCIA_FONTE", "resultado_final", "AUSÊNCIA",
+                                    "STATUS CONHECIMENTO diz ausência (arquivamento, art. 844 CLT), "
+                                    "mas a fase é %s e o resultado %s: não se encerrou em silêncio"
+                                    % (fase, resultado_final or "(vazio)")))
         return fase, resultado_final, incidente_situacao, transito, avisos
+
+    def completar_execucao(self, fc, fp, fase, sit, orig):
+        """STATUS EXECUÇÃO manda. Onde ele calou, STATUS CumPrSe, depois STATUS
+        DO CALCULO, depois STATUS PAGAMENTO completam a situação da execução —
+        do mais específico ao mais genérico, cada um só onde o anterior não
+        disse nada. Estes três de/para existiam em `normalizar.py` e a carga
+        nunca os aplicava (0 linhas no banco, apontado pelo Auditor). Onde o
+        CumPrSe discorda do STATUS EXECUÇÃO abre conferência; o cálculo e o
+        pagamento são campos mais grossos e não contradizem, só completam.
+
+        Devolve (situacao, original, avisos, credito_cedido). O `conferir.py`
+        recalcula esta mesma função da origem.
+        """
+        avisos, credito = [], False
+        for nome, tabela in (("STATUS CumPrSe", N.STATUS_CUMPRSE),
+                             ("STATUS DO CALCULO", N.STATUS_CALCULO),
+                             ("STATUS PAGAMENTO", N.STATUS_PAGAMENTO)):
+            bruto = self.valor(fc, fp, nome)
+            par, av = N._traduz(tabela, bruto, "situacao_execucao")
+            if av:
+                avisos.append(av)
+                continue
+            if not par:
+                continue
+            destino, valor = par
+            if destino == "CESSAO":
+                credito = True
+            elif destino == "SIT":
+                if sit is None:
+                    # o texto do STATUS EXECUÇÃO, quando havia, continua no _original
+                    sit = valor
+                    orig = ("%s | " % orig if orig else "") + "%s: %s" % (nome, txt(bruto))
+                elif sit != valor and nome == "STATUS CumPrSe":
+                    avisos.append(aviso("DIVERGENCIA_FONTE", "situacao_execucao",
+                                        "%s = %s" % (nome, txt(bruto)),
+                                        "STATUS EXECUÇÃO diz %s e %s diz %s: ficou o STATUS "
+                                        "EXECUÇÃO, que a equipe edita hoje" % (sit, nome, valor)))
+            elif destino == "FASE" and fase != valor:
+                avisos.append(aviso("DIVERGENCIA_FONTE", "fase", "%s = %s" % (nome, txt(bruto)),
+                                    "%s diz fase %s, mas a fase gravada é %s" % (nome, valor, fase)))
+        return sit, orig, avisos, credito
+
+    def revogacao_destino(self, fc, fp, st_proc, incidente_situacao):
+        """Onde vai REVOGAÇÃO e onde vai DATA REVOG.
+
+        Sentido 2 (o CLIENTE nos revogou): o STATUS DO PROCESSO diz ROUBADO /
+        RECEBIDO POR ELES / RECUPERADO, ou a REVOGAÇÃO diz ROUBADO — aí a data
+        é do incidente (`revogacao_nos_autos_em`). Em qualquer outro caso é o
+        sentido 1 (NÓS juntamos a revogação do patrono anterior) e a data é do
+        processo (`revogacao_em`), esteja a REVOGAÇÃO preenchida ou não. A
+        DATA REVOG nunca fica sem coluna: eram 648 processos com a data só no
+        bruto. REVOGAÇÃO = NÃO com data é contradição da origem: grava-se e
+        abre-se conferência. [CONFIRMAR pergunta 20.]
+
+        Devolve (destino, valor, avisos, data, onde).
+        """
+        v = lambda nome: self.valor(fc, fp, nome)                          # noqa: E731
+        destino, valor, av = N.revogacao(v("REVOGAÇÃO"), st_proc)
+        avisos = [av] if av else []
+        data = data_iso(v("DATA REVOG"))
+        onde = "INCIDENTE" if (incidente_situacao or destino == "INCIDENTE") else "PROCESSO"
+        if data and destino == "PROCESSO" and valor is False:
+            avisos.append(aviso("DIVERGENCIA_FONTE", "DATA REVOG", "REVOGAÇÃO = NÃO",
+                                "há DATA REVOG (%s) num registro cuja REVOGAÇÃO diz NÃO: a data "
+                                "foi gravada no %s e o sinal ficou como estava [CONFIRMAR 20]"
+                                % (data, "incidente" if onde == "INCIDENTE" else "processo")))
+        return destino, valor, avisos, data, onde
+
+    def situacao_audiencia(self, fc, fp, fase, tipo):
+        """A situação com que a audiência migrada nasce — pela EVIDÊNCIA.
+
+        A carga anterior gravava toda audiência como DESIGNADA, e 2.649 do
+        passado entravam na pauta como pendentes (Auditor). Aqui: ausência do
+        reclamante → NAO_REALIZADA; data futura ou sem data → DESIGNADA; data
+        passada com decisão, acordo ou encerramento POSTERIOR na origem, ou
+        instrução já encerrada, ou processo já além do conhecimento →
+        REALIZADA, com a evidência escrita; data passada sem nada disso →
+        REALIZADA com conferência AUDIENCIA_SEM_RESULTADO, porque a máquina
+        não tem etapa "não sei" (o mesmo remédio de `fase_execucao`). O
+        `conferir.py` recalcula esta função da origem.
+
+        Devolve (situacao, motivo, evidencia, aviso).
+        """
+        v = lambda nome: self.valor(fc, fp, nome)                          # noqa: E731
+        st_conh_bruto = v("STATUS CONHECIMENTO")
+        st_conh = N.STATUS_CONHECIMENTO.get(st_conh_bruto) or (None, None)
+        if st_conh[0] == "AUSENCIA":
+            return "NAO_REALIZADA", "AUSENCIA_RECLAMANTE", "STATUS CONHECIMENTO = AUSÊNCIA", None
+        data = (datahora_iso(v("DATA AUDIENCIA")) or "")[:10]
+        if not data or data >= self.hoje:
+            return "DESIGNADA", None, None, None
+        for rotulo, valor in (("sentença", campo(fc, "DATA SENTENCA")),
+                              ("acórdão", v("DATA ACORDAO")),
+                              ("acordo", campo(fc, "DATA DO ACORDO")),
+                              ("encerramento", v("ENCERRAMENTO"))):
+            d = data_iso(valor)
+            if d and d >= data:
+                return "REALIZADA", None, "%s em %s, depois da audiência" % (rotulo, d), None
+        if st_conh[0] == "DECISAO" or norm(st_conh_bruto) == "AGUARDANDO SENTENCA":
+            return ("REALIZADA", None,
+                    "STATUS CONHECIMENTO = %s (instrução encerrada)" % txt(st_conh_bruto), None)
+        if fase in ("RECURSAL", "EXECUCAO_PROVISORIA", "EXECUCAO_DEFINITIVA", "RECEBENDO") \
+                and tipo != "CONCILIACAO_EXECUCAO":
+            return "REALIZADA", None, "processo já em %s" % fase, None
+        return "REALIZADA", None, None, aviso(
+            "AUDIENCIA_SEM_RESULTADO", "situacao", data,
+            "audiência (%s) em %s, no passado, sem resultado, decisão, acordo ou encerramento "
+            "posterior na origem: entrou como REALIZADA [CONFIRMAR: aconteceu? qual o resultado?]"
+            % (tipo or "tipo não informado", data))
+
+    def candidatos_processo(self, fase, fc, fp):
+        """As datas que a origem oferece para a fase atual, da mais próxima da
+        entrada na fase para a mais distante."""
+        v = lambda nome: self.valor(fc, fp, nome)                          # noqa: E731
+        dist = [("DISTRIBUIÇAO", v("DISTRIBUIÇAO")), ("AÇÃO", v("AÇÃO"))]
+        sent = ("DATA SENTENCA", campo(fc, "DATA SENTENCA"))
+        acor = ("DATA ACORDAO", v("DATA ACORDAO"))
+        acordo = ("DATA DO ACORDO", campo(fc, "DATA DO ACORDO"))
+        enc = ("ENCERRAMENTO", v("ENCERRAMENTO"))
+        if fase in ("RECURSAL", "EXECUCAO_PROVISORIA"):
+            return [sent] + dist
+        if fase == "EXECUCAO_DEFINITIVA":
+            return [acor, sent] + dist
+        if fase == "ACORDO":
+            return [acordo, sent] + dist
+        if fase == "RECEBENDO":
+            return [acordo, acor, sent] + dist
+        if fase in ("ENCERRADO", "DESISTENCIA"):
+            return [enc, ("ARQUIVO TST", campo(fc, "ARQUIVO TST")), acor, sent, acordo] + dist
+        if fase == "SOBRESTADO":
+            return [("ULTIMA MOV", v("ULTIMA MOV")), acor, sent] + dist
+        return dist
 
     def processos(self):
         for copia_r, proc_r in self.casar_processos():
@@ -651,21 +963,28 @@ class Migracao:
                 fc, fp, fase, par_aud[0] if par_aud else None)
             if aplicado and aplicado[0] == "resultado_final" and not resultado_final:
                 resultado_final = aplicado[1]
+            sit_exec, sit_orig, avs_exec, credito = self.completar_execucao(
+                fc, fp, fase, sit_exec, sit_orig)
             pct, av_pct = N.percentual(v("SUCUMBENCIA %"))
             cnpj, razao = N.cnpj_razao(campo(fc, "CNPJ RECLAMADA"))
             nasc, av_nasc = data_br(v("NASCIMENTO"), "nascimento_parte")
             valor_causa, av_valor = N.dinheiro(v("VALOR"), "valor_causa_centavos")
+            complexidade = txt(v("COMPLEXIDADE"))
             ultima_mov = txt(v("ULTIMA MOV"))
             mov_em = (ultima_mov or "")[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", ultima_mov or "") else None
+            criado = (copia_r or proc_r).get("createdTime")
+            rec_emp = um_link(fc, "EMPRESA") or um_link(fp, "EMPRESA")
+            eid = self.empresa.get(rec_emp)
 
-            cliente_id, av_cli = self.achar_cliente(fc, fp)
+            cliente_id, av_cli = self.achar_cliente(fc, fp, criado)
+            self.completar_ficha(cliente_id, fc, fp)
             pid = self.bd.inserir("processos", dict(
                 cliente_id=cliente_id, fase=fase,
                 numero_cnj=txt(v("Nº PROCESSO")),
                 nome_parte=txt(v("NOME")), cpf_parte=so_digitos(campo(fc, "CPF")),
                 email_parte=txt(campo(fc, "E-MAIL")),
                 telefone_parte=so_digitos(v("TELEFONE")), nascimento_parte=nasc,
-                empresa_id=self.empresa.get(um_link(fc, "EMPRESA") or um_link(fp, "EMPRESA")),
+                empresa_id=eid,
                 cnpj_reclamada=cnpj, razao_social_reclamada=razao,
                 trt=trt_, vara=txt(v("VARA")), turma=turma_,
                 cadeira=txt(campo(fc, "CADEIRA")), relator=txt(campo(fc, "RELATOR")),
@@ -674,14 +993,22 @@ class Migracao:
                 tel_vara=txt(v("TEL VARA")),
                 rito=rito, classe_cnj=classe, classe_incidente=classe_inc,
                 valor_causa_centavos=valor_causa,
-                complexidade=txt(v("COMPLEXIDADE")),
+                complexidade=complexidade,
+                # A/B/C sai do valor (docs/de-para.md); onde alguém decidiu diferente,
+                # a decisão vence e fica marcada. Na carga real: 0 casos.
+                complexidade_manual=bool(complexidade and valor_causa is not None
+                                         and N.complexidade_da_faixa(valor_causa) != complexidade),
+                credito_cedido=credito,
                 distribuicao_em=data_iso(v("DISTRIBUIÇAO")),
                 ajuizamento_em=data_iso(v("AÇÃO")), assinatura_em=data_iso(v("ASSINATURA")),
                 advogado_id=self.pessoa.get(um_link(fc, "ADVOGADO") or um_link(fp, "ADVOGADO")),
                 captador_id=self.pessoa.get(um_link(fc, "CAPTADOR") or um_link(fp, "CAPTADOR")),
                 situacao_execucao=sit_exec, situacao_execucao_original=sit_orig,
                 numero_cumprse=cumprse,
-                transito_em=(data_iso(campo(fc, "DATA SENTENCA")) if transito else None),
+                # STATUS DO PROCESSO diz que transitou; a DATA do trânsito a
+                # origem não tem — e a data da sentença não é ela. Fica NULL,
+                # e o fato vai para uma anotação na ficha (abaixo).
+                transito_em=None,
                 resultado_final=resultado_final, resultado_texto=txt(v("RESULTADO")),
                 encerrado_em=data_iso(v("ENCERRAMENTO")),
                 sucumbencia_percent=pct,
@@ -690,19 +1017,92 @@ class Migracao:
                 drive_url=txt(v("DRIVE")), astrea_url=txt(v("ASTREA")),
                 airtable_record_id=rec_copia, airtable_record_id_processual=rec_proc,
                 airtable_tabela=("CÓPIA DA PROCESSUAL" if rec_copia else "PROCESSUAL"),
-                airtable_bruto={"copia": fc, "processual": fp}))
+                airtable_bruto={"copia": fc, "processual": fp},
+                # na PROCESSUAL o campo "Created By" é lastModifiedTime com nome errado
+                atualizado_em=datahora_iso(campo(fp, "Created By"))
+                if isinstance(campo(fp, "Created By"), str) else None,
+                criado_em=datahora_iso(criado)))
             self.processo[rec_copia or rec_proc] = pid
             if rec_proc:
                 self.processo[rec_proc] = pid
             cnj = so_digitos(v("Nº PROCESSO"))
             if cnj:
                 self.processo_por_cnj.setdefault(cnj, pid)
-            self.hist.append(("processos", pid, fase))
-            for a in (av_cl, av_trt, av_turma, av_exec, av_pct, av_cli, av_nasc, av_valor):
+            self._h("processos", pid, fase, self.candidatos_processo(fase, fc, fp), criado)
+            dist = data_iso(v("DISTRIBUIÇAO"))
+            if dist and (cliente_id not in self.distribuicao_do_cliente
+                         or dist < self.distribuicao_do_cliente[cliente_id]):
+                self.distribuicao_do_cliente[cliente_id] = dist
+            if transito:
+                self.bd.inserir("anotacoes", dict(
+                    processo_id=pid, origem="MIGRACAO", campo_origem="STATUS DO PROCESSO",
+                    texto="Trânsito em julgado registrado na origem (STATUS DO PROCESSO = TRÂNSITO "
+                          "EM JULGADO), sem data. [CONFIRMAR: data do trânsito]"))
+            if eid and cnpj:
+                self.empresa_cnpj[eid][cnpj] += 1
+                if razao:
+                    self.empresa_razao[(eid, cnpj)][razao] += 1
+            for a in [av_cl, av_trt, av_turma, av_exec, av_pct, av_cli, av_nasc, av_valor] + avs_exec:
                 self.anotar(a, "processos", pid, rec_copia or rec_proc,
                             origem_a="CÓPIA" if rec_copia else "PROCESSUAL", grupo="Jurídico")
+            self.situacao_da_empresa(pid, fc, fp, rec_copia or rec_proc)
             self.divergencias(pid, fc, fp, rec_copia)
-            self.filhos_do_processo(pid, fc, fp, rec_copia or rec_proc, st_proc, incidente_situacao)
+            self.filhos_do_processo(pid, fc, fp, rec_copia or rec_proc, st_proc,
+                                    incidente_situacao, criado)
+        self.cnpj_das_empresas()
+
+    def situacao_da_empresa(self, pid, fc, fp, rec):
+        """SITU. EMPRESA é lookup do STATUS EMPRESA da reclamada ligada. Quando
+        os dois lados apontam para reclamadas diferentes, a divergência é do
+        LINK (conferência EMPRESA, em `divergencias`), não da situação. Só
+        quando o link é o mesmo e o lookup ainda discorda do cadastro é que a
+        situação está desatualizada em algum lugar — e isso vira conferência."""
+        a, b = um_link(fc, "EMPRESA"), um_link(fp, "EMPRESA")
+        if a and b and a != b:
+            return
+        rec_emp = a or b
+        lk = self.valor(fc, fp, "SITU. EMPRESA")
+        lk = lk[0] if isinstance(lk, list) and lk else lk
+        if not (rec_emp and lk and rec_emp in self.empresa):
+            return
+        sit, _ = N._traduz(N.SITUACAO_EMPRESA, lk, "situacao")
+        if sit and sit != self.empresa_situacao.get(rec_emp):
+            self.anotar(aviso("DIVERGENCIA_FONTE", "SITU. EMPRESA", txt(lk),
+                              "o lookup do processo diz %s e o cadastro da reclamada diz %s"
+                              % (sit, self.empresa_situacao.get(rec_emp) or "(vazio)")),
+                        "processos", pid, rec, origem_a="lookup do processo",
+                        valor_b=self.empresa_situacao.get(rec_emp), origem_b="EMPRESAS",
+                        escolhido=self.empresa_situacao.get(rec_emp), grupo="Jurídico")
+
+    def cnpj_das_empresas(self):
+        """O CNPJ da reclamada vem da CÓPIA, no processo. Sobe para a empresa
+        quando é INEQUÍVOCO: todos os processos da empresa trazem o mesmo CNPJ.
+        Empresa com mais de um CNPJ (filiais, ou cadastro que mistura duas) não
+        recebe nenhum e abre EMPRESA_AMBIGUA; o mesmo CNPJ em mais de um
+        cadastro de empresa é duplicidade, e também abre. A razão social só
+        sobe quando é uma só."""
+        por_cnpj = defaultdict(set)
+        for eid, cnpjs in self.empresa_cnpj.items():
+            for c in cnpjs:
+                por_cnpj[c].add(eid)
+        for eid, cnpjs in sorted(self.empresa_cnpj.items()):
+            if len(cnpjs) == 1:
+                cnpj = next(iter(cnpjs))
+                razoes = self.empresa_razao.get((eid, cnpj), {})
+                self.bd.executar("UPDATE empresas SET cnpj=%s, razao_social=%s WHERE id=%s",
+                                 (cnpj, next(iter(razoes)) if len(razoes) == 1 else None, eid))
+            else:
+                self.anotar(aviso("EMPRESA_AMBIGUA", "cnpj", "%d CNPJs distintos" % len(cnpjs),
+                                  "os processos desta reclamada trazem CNPJs diferentes (%s): "
+                                  "nenhum subiu para o cadastro" % ", ".join(
+                                      "%s ×%d" % (c, n) for c, n in sorted(cnpjs.items()))),
+                            "empresas", eid, grupo="Jurídico")
+        for cnpj, eids in sorted(por_cnpj.items()):
+            if len(eids) > 1:
+                self.anotar(aviso("EMPRESA_AMBIGUA", "cnpj", cnpj,
+                                  "o mesmo CNPJ aparece nos processos de %d cadastros de empresa "
+                                  "(ids %s): cadastro repetido?" % (len(eids), ", ".join(map(str, sorted(eids))))),
+                            "empresas", min(eids), grupo="Jurídico")
 
     def resultado_sentenca(self, fc, fp):
         """(resultado de DECISAO SENTENCA, nota de SENTENCA, resultado FINAL).
@@ -774,6 +1174,17 @@ class Migracao:
             return
         for nome in self.CONFERE:
             a, b = campo(fc, nome), campo(fp, nome)
+            if nome == "EMPRESA":
+                # link: compara o record e mostra o NOME de cada lado — 423
+                # processos apontam para reclamadas diferentes nas duas tabelas
+                a, b = um_link(fc, nome), um_link(fp, nome)
+                if a and b and a != b:
+                    self.anotar(aviso("DIVERGENCIA_FONTE", nome, self.empresa_nome.get(a, a),
+                                      "a CÓPIA e a PROCESSUAL ligam o processo a reclamadas diferentes"),
+                                "processos", pid, rec, origem_a="CÓPIA",
+                                valor_b=self.empresa_nome.get(b, b), origem_b="PROCESSUAL",
+                                escolhido=self.empresa_nome.get(a, a), grupo="Jurídico")
+                continue
             if a in (None, "", []) or b in (None, "", []) or norm(a) == norm(b):
                 continue
             self.anotar(aviso("DIVERGENCIA_FONTE", nome, str(a),
@@ -787,68 +1198,113 @@ class Migracao:
                     processo_id=pid, campo=nome, valor=str(perdido),
                     origem=("PROCESSUAL" if perdido is b else "COPIA")))
 
-    def achar_cliente(self, fc, fp):
-        """Todo processo tem dono. Do mais forte para o mais fraco:
-        o link vivo da PROCESSUAL, o CPF dos autos, o nome + a reclamada.
-        O que não é seguro NÃO vira palpite: nasce ficha com origem PROCESSO e
-        uma conferência aberta, porque cliente errado é pior que cliente novo."""
+    def dono_do_processo(self, fc, fp):
+        """A regra de quem é o cliente do processo, do mais forte para o mais
+        fraco: o link vivo da PROCESSUAL, o CPF dos autos, o nome. Devolve
+        ('ACHOU', id, None) ou ('NOVO', None, aviso). Pura: não escreve — o
+        `conferir.py` a repete da origem para contar as fichas criadas dos autos."""
         rec_pre = um_link(fp, "PRE PROCESSUAL")
         if rec_pre and rec_pre in self.cliente:
-            return self.cliente[rec_pre], None
+            return "ACHOU", self.cliente[rec_pre], None
         cpf = so_digitos(campo(fc, "CPF"))
         if cpf and cpf_valido(cpf) and cpf in self.cliente_por_cpf:
-            return self.cliente_por_cpf[cpf], None
+            return "ACHOU", self.cliente_por_cpf[cpf], None
         nome = txt(campo(fc, "NOME") or campo(fp, "NOME"))
         candidatos = self.cliente_por_nome.get(norm(nome or ""), [])
         if len(candidatos) == 1:
-            return candidatos[0], None
+            return "ACHOU", candidatos[0], None
         av = None
         if len(candidatos) > 1:
             av = aviso("CLIENTE_AMBIGUO", "cliente_id", nome,
                        "%d fichas com o mesmo nome: o processo ficou com uma ficha nova" % len(candidatos))
-        cid = self.bd.inserir("clientes", dict(
-            status="DISTRIBUIDO", nome=nome or "(sem nome nos autos)", nome_norm=norm(nome),
-            cpf=cpf, cpf_valido=bool(cpf and cpf_valido(cpf)),
-            email=txt(campo(fc, "E-MAIL")), telefone=so_digitos(campo(fc, "TELEFONE")),
-            empresa_id=self.empresa.get(um_link(fc, "EMPRESA") or um_link(fp, "EMPRESA")),
-            origem_cadastro="PROCESSO",
-            airtable_tabela="CÓPIA DA PROCESSUAL",
-            airtable_bruto={"origem": "ficha criada a partir dos autos"}))
-        self.hist.append(("clientes", cid, "DISTRIBUIDO"))
+        return "NOVO", None, av
+
+    def lembrar_cliente(self, cid, cpf, nome):
         if cpf and cpf_valido(cpf):
             self.cliente_por_cpf.setdefault(cpf, cid)
         if nome:
             self.cliente_por_nome[norm(nome)].append(cid)
+
+    def achar_cliente(self, fc, fp, criado=None):
+        """Todo processo tem dono. Do mais forte para o mais fraco:
+        o link vivo da PROCESSUAL, o CPF dos autos, o nome + a reclamada.
+        O que não é seguro NÃO vira palpite: nasce ficha com origem PROCESSO e
+        uma conferência aberta, porque cliente errado é pior que cliente novo.
+
+        A ficha nova leva o que os autos têm: CPF, telefone, e-mail, data de
+        assinatura e nascimento (1.556 nasciam sem assinatura e 1.934 sem
+        nascimento tendo-os no processo — Auditor). O que a origem não tem
+        vira pendência de cadastro em `cadastro_incompleto()`."""
+        como, cid, av = self.dono_do_processo(fc, fp)
+        if como == "ACHOU":
+            return cid, None
+        v = lambda nome: self.valor(fc, fp, nome)                          # noqa: E731
+        cpf = so_digitos(campo(fc, "CPF"))
+        nome = txt(campo(fc, "NOME") or campo(fp, "NOME"))
+        assinatura = data_iso(v("ASSINATURA"))
+        nasc, _ = data_br(v("NASCIMENTO"), "nascimento_parte")
+        cid = self.bd.inserir("clientes", dict(
+            status="DISTRIBUIDO", nome=nome or "(sem nome nos autos)", nome_norm=norm(nome),
+            cpf=cpf, cpf_valido=bool(cpf and cpf_valido(cpf)),
+            email=txt(campo(fc, "E-MAIL")), telefone=so_digitos(v("TELEFONE")),
+            data_assinatura_contrato=assinatura, data_nascimento=nasc,
+            empresa_id=self.empresa.get(um_link(fc, "EMPRESA") or um_link(fp, "EMPRESA")),
+            origem_cadastro="PROCESSO",
+            airtable_tabela="CÓPIA DA PROCESSUAL",
+            airtable_bruto={"origem": "ficha criada a partir dos autos"},
+            criado_em=datahora_iso(criado)))
+        self._h("clientes", cid, "DISTRIBUIDO",
+                [("DISTRIBUIÇAO", v("DISTRIBUIÇAO")), ("AÇÃO", v("AÇÃO")), ("ASSINATURA", assinatura)],
+                criado)
+        self.cliente_assinatura[cid] = assinatura
+        self.cliente_nascimento[cid] = nasc
+        self.cliente_origem[cid] = ("autos: CÓPIA DA PROCESSUAL", None)
+        self.lembrar_cliente(cid, cpf, nome)
         return cid, av
 
     # ------------------------------------------------ o que pende do processo
-    def filhos_do_processo(self, pid, fc, fp, rec, st_proc, incidente_situacao):
+    def filhos_do_processo(self, pid, fc, fp, rec, st_proc, incidente_situacao, criado=None):
         v = lambda nome: self.valor(fc, fp, nome)                          # noqa: E731
+        fase = self.fase_final(fc, fp)[0]
 
-        # --- audiência: uma LINHA, não um campo sobrescrito
+        # --- audiência: uma LINHA, não um campo sobrescrito; a situação pela evidência
         if v("DATA AUDIENCIA") or v("AUDIENCIA"):
             tipo = mod = rito = None
             par, av = N._traduz(N.AUDIENCIA, v("AUDIENCIA"), "tipo")
             if par:
                 tipo, mod, rito = par
-            st_conh = N.STATUS_CONHECIMENTO.get(v("STATUS CONHECIMENTO")) or (None, None)
-            ausencia = st_conh[0] == "AUSENCIA"
+            situacao, motivo, evidencia, av_sit = self.situacao_audiencia(fc, fp, fase, tipo)
             aid = self.bd.inserir("audiencias", dict(
-                processo_id=pid, situacao=("NAO_REALIZADA" if ausencia else "DESIGNADA"),
+                processo_id=pid, situacao=situacao,
                 data_hora=datahora_iso(v("DATA AUDIENCIA")), tipo=tipo, modalidade=mod,
-                motivo=("AUSENCIA_RECLAMANTE" if ausencia else None),
+                motivo=motivo,
+                observacao=(("situação inferida na carga: " + evidencia) if evidencia else
+                            (av_sit["prova"] if av_sit else None)),
                 advideo_em=datahora_iso(v("DATA ADVIDEO")),
                 advideo_responsavel_id=self.pessoa.get(um_link(fp, "RESP ADVIDEO")),
                 advideo_previsto=bool(v("STATUS ADVIDEO")),
                 airtable_record_id=rec, airtable_tabela="PROCESSUAL",
-                airtable_bruto={"AUDIENCIA": v("AUDIENCIA"), "STATUS ADVIDEO": v("STATUS ADVIDEO")}))
-            self.hist.append(("audiencias", aid, "NAO_REALIZADA" if ausencia else "DESIGNADA"))
+                airtable_bruto={"AUDIENCIA": v("AUDIENCIA"), "STATUS ADVIDEO": v("STATUS ADVIDEO"),
+                                "DATA AUDIENCIA": v("DATA AUDIENCIA"),
+                                "STATUS CONHECIMENTO": v("STATUS CONHECIMENTO")}))
+            self._h("audiencias", aid, situacao,
+                    [("DATA AUDIENCIA", v("DATA AUDIENCIA"))] if situacao != "DESIGNADA" else [],
+                    criado)
             self.bd.inserir("eventos", dict(tipo="AUDIENCIA", processo_id=pid, audiencia_id=aid,
                                             data_hora=datahora_iso(v("DATA AUDIENCIA")),
-                                            situacao="REALIZADO" if ausencia else "AGENDADO"))
+                                            situacao=("REALIZADO" if situacao in ("REALIZADA", "NAO_REALIZADA")
+                                                      else "AGENDADO")))
             if rito:
                 self.bd.executar("UPDATE processos SET rito=COALESCE(rito,%s) WHERE id=%s", (rito, pid))
             self.anotar(av, "audiencias", aid, rec, origem_a="AUDIENCIA")
+            self.anotar(av_sit, "audiencias", aid, rec, origem_a="DATA AUDIENCIA", grupo="Jurídico")
+
+        # --- REDISTRIBUIR: era opção de STATUS DO PROCESSO; é trabalho a fazer
+        st = N.STATUS_PROCESSO.get(st_proc) if st_proc else None
+        if st and st[0] == "TAREFA":
+            self.bd.inserir("tarefas", dict(titulo=st[1], tipo="REDISTRIBUICAO", processo_id=pid,
+                                            grupo="Jurídico", origem="MIGRACAO",
+                                            texto_original=txt(st_proc)))
 
         # --- perícias
         for nome_data, tipo in (("DATA PERÍCIA MÉDICA", "MEDICA"), ("DATA PERÍCIA TECNICA", "TECNICA")):
@@ -890,13 +1346,19 @@ class Migracao:
                 ("HOMOLOGADO", v("VALOR HOM"),    v("SUCUMB HOM"),  campo(fc, "HONOR  TOTAL HOMOL"))):
             if any(x not in (None, "") for x in (val, suc, hon)):
                 st_calc, _ = N._traduz(N.STATUS_CALCULO, v("STATUS DO CALCULO"), "situacao_execucao")
+                # A data da homologação a origem NÃO tem (era gravada a data de
+                # ENCERRAMENTO em 411 linhas — inventada). O fato fica dito.
                 self.bd.inserir("calculos", dict(
                     processo_id=pid, base=base, valor_centavos=centavos(val),
                     sucumbencia_centavos=centavos(suc), honorario_centavos=centavos(hon),
-                    homologado_em=(data_iso(v("ENCERRAMENTO")) if base == "HOMOLOGADO"
-                                   and st_calc and st_calc[1] == "HOMOLOGADO" else None)))
+                    homologado_em=None,
+                    observacao=("STATUS DO CALCULO = %s na origem; a data não foi registrada lá"
+                                % txt(v("STATUS DO CALCULO")) if st_calc and base == "HOMOLOGADO"
+                                else None)))
         st_ac, _ = N._traduz(N.STATUS_ACORDO, v("STATUS ACORDO"), "situacao")
         if st_ac or v("VALOR ACORDO") or campo(fc, "DATA DO ACORDO"):
+            # QUEBRA: `quebrado_em` fica NULL — a origem não tem a data da quebra,
+            # só o status (docs/de-para.md).
             self.bd.inserir("acordos", dict(
                 processo_id=pid, valor_centavos=centavos(v("VALOR ACORDO")),
                 honorario_centavos=centavos(campo(fc, "HONOR TOTAL ACORDO")),
@@ -906,6 +1368,13 @@ class Migracao:
                 situacao=st_ac or "EM_ANDAMENTO",
                 observacao=("as parcelas nascem no portal: a origem só guardava quantas eram"
                             if v("PARCELAS") else None)))
+            if not st_ac:
+                # acordo com valor ou data e sem status: EM_ANDAMENTO é a etapa
+                # inicial da tabela, não um fato da origem — fica dito
+                self.anotar(aviso("VALOR_SEM_TRADUCAO", "situacao_acordo", "(vazio)",
+                                  "há VALOR ACORDO ou DATA DO ACORDO e nenhum STATUS ACORDO: o acordo "
+                                  "nasceu EM_ANDAMENTO, que é o padrão da tabela [CONFIRMAR]"),
+                            "acordos", None, rec, origem_a="STATUS ACORDO", grupo="Jurídico")
         for base, valor_bruto in (("TOTAL", v("TOTAL RECEBIDO")),
                                   ("SUCUMBENCIA", v("SUCUMB RECEBIDO")),
                                   ("HONORARIOS", v("HONOR TOTAL"))):
@@ -914,34 +1383,43 @@ class Migracao:
                 self.bd.inserir("recebimentos", dict(processo_id=pid, base=base, valor_centavos=c))
 
         # --- o incidente de representação
-        destino_rev, valor_rev, av_rev = N.revogacao(v("REVOGAÇÃO"), st_proc)
+        destino_rev, valor_rev, avs_rev, data_rev, onde = self.revogacao_destino(
+            fc, fp, st_proc, incidente_situacao)
         notif = N.NOTIFICACAO.get(v("NOTIFICAÇÃO"))
         prov = txt(v("PROVIDENCIAS"))
         if incidente_situacao or notif or destino_rev == "INCIDENTE" or prov:
             situacao = incidente_situacao or (notif[0] if notif else "DETECTADO")
-            campos = dict(processo_id=pid, situacao=situacao, tipo="TROCA_DE_ADVOGADO",
-                          providencia_texto=prov,
-                          cliente_avisado_em=(data_iso(v("ENCERRAMENTO")) if v("CLIENTE AVISADO?") else None),
-                          revogacao_nos_autos_em=(data_iso(v("DATA REVOG"))
-                                                  if destino_rev == "INCIDENTE" else None))
-            if notif and notif[1]:
-                campos[notif[1]] = data_iso(v("DATA REVOG")) or data_iso(v("ENCERRAMENTO"))
-            iid = self.bd.inserir("incidentes", campos)
-            self.hist.append(("incidentes", iid, situacao))
+            # As datas da notificação (redigida, enviada, recebida, respondida) e
+            # do aviso ao cliente a origem NÃO tem — a carga anterior punha a
+            # DATA REVOG ou o ENCERRAMENTO nelas (72 inventadas). Ficam NULL; a
+            # situação do incidente carrega o fato, e o bruto guarda os campos.
+            iid = self.bd.inserir("incidentes", dict(
+                processo_id=pid, situacao=situacao, tipo="TROCA_DE_ADVOGADO",
+                providencia_texto=prov,
+                revogacao_nos_autos_em=(data_rev if onde == "INCIDENTE" else None),
+                airtable_bruto={k: v(k) for k in ("STATUS DO PROCESSO", "REVOGAÇÃO", "DATA REVOG",
+                                                  "NOTIFICAÇÃO", "PROVIDENCIAS", "CLIENTE AVISADO?")
+                                if v(k) not in (None, "", [])}))
+            self._h("incidentes", iid, situacao,
+                    [("DATA REVOG", data_rev)] if onde == "INCIDENTE" else [], criado)
             for chave, titulo in N.PROVIDENCIAS.items():
                 if prov and norm(chave) in norm(prov):
                     self.bd.inserir("tarefas", dict(titulo=titulo, tipo="NOTIFICACAO",
                                                     processo_id=pid, incidente_id=iid,
                                                     grupo="Jurídico", origem="MIGRACAO",
                                                     texto_original=prov))
-        elif destino_rev == "PROCESSO":
+        # o sentido 1 é do processo, haja ou não incidente por outro motivo
+        # (164 processos perdiam o sinal por estarem no `elif` — Auditor)
+        if onde == "PROCESSO" and (destino_rev == "PROCESSO" or data_rev):
             self.bd.executar("UPDATE processos SET revogou_patrono_anterior=%s, revogacao_em=%s "
-                             "WHERE id=%s", (valor_rev, data_iso(v("DATA REVOG")), pid))
-        elif destino_rev == "TAREFA":
+                             "WHERE id=%s",
+                             (valor_rev if destino_rev == "PROCESSO" else None, data_rev, pid))
+        if destino_rev == "TAREFA":
             self.bd.inserir("tarefas", dict(titulo=valor_rev, tipo="OUTRO", processo_id=pid,
                                             grupo="Jurídico", origem="MIGRACAO",
                                             texto_original=txt(v("REVOGAÇÃO"))))
-        self.anotar(av_rev, "processos", pid, rec, origem_a="REVOGAÇÃO")
+        for a in avs_rev:
+            self.anotar(a, "processos", pid, rec, origem_a="REVOGAÇÃO", grupo="Jurídico")
 
         # --- o andamento necessário: tarefa, que é o que sempre foi
         andamento = txt(v("AND. NECESSÁRIO"))
@@ -1007,10 +1485,16 @@ class Migracao:
                         (self.bd.seq["recebimentos"] + 1, pid, base, c,
                          json.dumps({"origem": "PÓS PROCESSUAL"}, ensure_ascii=False)))
                     self.bd.seq["recebimentos"] += 1
+            # o registro do PÓS inteiro vai para o bruto do processo (perda zero)
+            self.bd.executar("UPDATE processos SET airtable_bruto = airtable_bruto || %s::jsonb "
+                             "WHERE id=%s", (json.dumps({"pos": f}, ensure_ascii=False), pid))
             arq = N.STATUS_ARQUIVAMENTO.get(campo(f, "STATUS ARQUIVAMENTO"))
             if arq and arq[0] == "DATA":
-                self.bd.executar("UPDATE processos SET arquivado_em=COALESCE(arquivado_em, "
-                                 "encerrado_em) WHERE id=%s", (pid,))
+                # "Arquivado" diz o fato; a data a origem não tem (era copiada
+                # do encerramento em 37 linhas — inventada). `arquivado_em` fica NULL.
+                self.bd.executar("UPDATE processos SET arquivado=true WHERE id=%s", (pid,))
+            elif arq and arq[0] == "NADA":
+                self.bd.executar("UPDATE processos SET arquivado=false WHERE id=%s", (pid,))
             elif arq and arq[0] == "TAREFA":
                 self.bd.inserir("tarefas", dict(titulo=arq[1], tipo="ARQUIVAMENTO", processo_id=pid,
                                                 responsavel_id=self.pessoa.get(um_link(f, "RESPONSAVEL")),
@@ -1049,7 +1533,9 @@ class Migracao:
                 horario_trabalho=txt(campo(f, "HORARIO DE TRABALHO")),
                 ainda_trabalha=trab, demissao_em=data_iso(campo(f, "DATA DE DEMISSÃO")),
                 tem_processo=tem, situacao=sit or "PENDENTE",
-                confirmada_em=(data_iso(campo(f, "DATA ULTIMO CONTATO")) if sit == "CONFIRMADA" else None),
+                # a data da confirmação a origem não tem; o último contato não é
+                # necessariamente ela. Fica NULL — o status carrega o fato.
+                confirmada_em=None,
                 cobrancas=cob or 0, ultimo_contato_em=data_iso(campo(f, "DATA ULTIMO CONTATO")),
                 duplicado=dup,
                 origem=N.ORIGEM_TESTEMUNHA.get(txt(campo(f, "origem_testemunha"))),
@@ -1068,8 +1554,11 @@ class Migracao:
                     self.bd.inserir("testemunha_vinculos", dict(
                         testemunha_id=tid, cliente_id=self.cliente[rec_c]))
             for i in range(cob or 0):
+                # só a ÚLTIMA cobrança tem data conhecida (DATA ULTIMO CONTATO);
+                # as anteriores ficam sem data em vez de repetir a última
                 self.bd.inserir("contatos", dict(
-                    testemunha_id=tid, em=data_iso(campo(f, "DATA ULTIMO CONTATO")),
+                    testemunha_id=tid,
+                    em=(data_iso(campo(f, "DATA ULTIMO CONTATO")) if i + 1 == cob else None),
                     canal="TELEFONE", origem="MIGRACAO", resultado="cobrança %d" % (i + 1)))
             if txt(campo(f, "OBSERVACOES")):
                 self.bd.inserir("anotacoes", dict(testemunha_id=tid,
@@ -1129,23 +1618,32 @@ class Migracao:
     # ---------------------------------------------------------- 8. o fecho
     def historico(self):
         """A ficha não nasce sem passado. Uma linha por entidade migrada, com
-        `origem = 'MIGRACAO'` — assim o `v_estagnados` sabe desde quando cada
-        uma está parada e ninguém confunde carga com trabalho de gente."""
-        for entidade, eid, etapa in self.hist:
+        `origem = 'MIGRACAO'` e a MELHOR DATA que a origem oferece para a
+        etapa atual (`quando()`); o motivo diz de qual campo a data saiu. É
+        essa data que `v_estagnados` lê — datada da carga, o SLA nascia zerado."""
+        for h in self.hist:
+            candidatos = h["candidatos"]
+            if h["entidade"] == "clientes" and h["etapa"] == "DISTRIBUIDO":
+                candidatos = [("DISTRIBUIÇAO do processo",
+                               self.distribuicao_do_cliente.get(h["id"]))] + candidatos
+            em, motivo = self.quando(candidatos, h["criado"])
             self.bd.inserir("historico_etapas", dict(
-                entidade=entidade, entidade_id=eid, de=None, para=etapa,
-                motivo="carga inicial do Airtable", origem="MIGRACAO"))
+                entidade=h["entidade"], entidade_id=h["id"], de=None, para=h["etapa"],
+                motivo=motivo, origem="MIGRACAO", em=em))
 
     def gravar_conferencias(self, guardadas):
         vistas = set()
+        decididas = guardadas.get("conferencias", {}) if isinstance(guardadas, dict) else guardadas
         for c in self.conf:
             if c["chave"] in vistas:
                 continue
             vistas.add(c["chave"])
-            antes = guardadas.get(c["chave"])
+            antes = decididas.get(c["chave"])
             if antes:
-                c.update(situacao=antes[1], dono_id=antes[2], anotacao=antes[3],
-                         resolvido_em=antes[4], resolvido_por=antes[5])
+                # dono e quem resolveu são recasados pelo record da pessoa: o id mudou
+                c.update(situacao=antes[1], dono_id=self.pessoa.get(antes[6]),
+                         anotacao=antes[3], resolvido_em=antes[4],
+                         resolvido_por=self.pessoa.get(antes[7]))
             self.bd.inserir("conferencias", c)
 
 
@@ -1188,6 +1686,8 @@ def main():
     inicio = time.strftime("%Y-%m-%d %H:%M:%S")
     try:
         if a.recriar:
+            # as contas de acesso sobrevivem até ao --recriar: lê antes de derrubar
+            guardadas = bd.guardar()
             bd.executar("DROP SCHEMA IF EXISTS public CASCADE")
             bd.executar("CREATE SCHEMA public")
             aplicar_arquivos(bd, ["esquema.sql", "governanca.sql"])
@@ -1198,15 +1698,17 @@ def main():
             # a governança criou cinco tabelas DEPOIS do esquema: RLS de novo,
             # senão o mapa de etapas fica aberto na API pública
             bd.executar("SELECT ligar_rls()")
-            guardadas = {}
         else:
             guardadas = bd.limpar()
 
         bd.governanca(False)                 # a carga do passivo passa por fora
         m = Migracao(bd, a.amostra)
-        for passo, funcao in (("equipe", m.equipe), ("empresas", m.empresas),
+        for passo, funcao in (("equipe", m.equipe),
+                              ("contas de acesso", lambda: m.restaurar_usuarios(guardadas)),
+                              ("empresas", m.empresas),
                               ("fragilidades", m.fragilidades), ("clientes", m.clientes),
                               ("processos", m.processos), ("pós-processual", m.pos_processual),
+                              ("cadastro incompleto", m.cadastro_incompleto),
                               ("testemunhas", m.testemunhas),
                               ("auditoria de testemunhas", m.auditoria_testemunhas),
                               ("faltantes", m.faltantes), ("histórico", m.historico)):
@@ -1217,6 +1719,7 @@ def main():
         bd.governanca(True)                  # e a regra volta inteira
 
         resumo = {t: n for t, n in sorted(bd.conta.items())}
+        resumo["_data_referencia"] = m.hoje
         bd.inserir("migracao_execucoes", dict(
             iniciada_em=inicio, terminada_em=time.strftime("%Y-%m-%d %H:%M:%S"),
             fonte="BASE GGV - TRAB V3 (%s)" % BASE,

@@ -9,7 +9,7 @@ flowchart TD
     ENTREVISTA["Entrevista<br/><small>Atendimento · 5d</small>"]
     PETICAO_PENDENTE["Petição a redigir<br/><small>Jurídico · 2d</small>"]
     PETICAO_EM_CRIACAO["Petição em redação<br/><small>Jurídico · 3d</small>"]
-    PETICAO_AGUARDANDO_APROVACAO["Petição aguardando aprovação<br/><small>Gestão · 2d</small>"]
+    PETICAO_AGUARDANDO_APROVACAO["Petição aguardando aprovação<br/><small>Petição Inicial · 2d</small>"]
     PETICAO_APROVADA["Petição aprovada, a distribuir<br/><small>Jurídico · 2d</small>"]
     STAND_BY["Stand by<br/><small>Atendimento · 60d</small>"]
     DISTRIBUIDO["Distribuído (concluído)<br/><small>Jurídico</small>"]
@@ -34,9 +34,9 @@ flowchart TD
     LEAD -->|"Contrato assinado 🔒"| DOCUMENTACAO
     LEAD -->|"Sem resposta"| SEM_RESPOSTA
     LEAD -->|"Colocar em stand by"| STAND_BY
-    PETICAO_AGUARDANDO_APROVACAO -->|"Cancelar (GESTOR) 🔒"| CANCELADO
-    PETICAO_AGUARDANDO_APROVACAO -->|"Aprovar a inicial (GESTOR) 🔒"| PETICAO_APROVADA
-    PETICAO_AGUARDANDO_APROVACAO -->|"Devolver para ajuste (GESTOR) 🔒"| PETICAO_EM_CRIACAO
+    PETICAO_AGUARDANDO_APROVACAO -->|"Cancelar (ADVOGADO) 🔒"| CANCELADO
+    PETICAO_AGUARDANDO_APROVACAO -->|"Aprovar a inicial (ADVOGADO) 🔒"| PETICAO_APROVADA
+    PETICAO_AGUARDANDO_APROVACAO -->|"Devolver para ajuste (ADVOGADO) 🔒"| PETICAO_EM_CRIACAO
     PETICAO_APROVADA -->|"Cancelar (ADVOGADO) 🔒"| CANCELADO
     PETICAO_APROVADA -->|"Registrar distribuição (ADVOGADO) 🔒"| DISTRIBUIDO
     PETICAO_APROVADA -->|"Reabrir redação (ADVOGADO) 🔒"| PETICAO_EM_CRIACAO
