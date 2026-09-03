@@ -34,9 +34,8 @@ em nada da Mapech — o previdenciário deles virou o oficial e nosso trabalho l
 
 Quem coordena é a sessão principal (diretor). Cada agente lê este arquivo primeiro.
 
-**Modelo por agente** (decisão do Lucas, 03/09/2026): o modelo mais forte fica onde o erro custa
-mais caro depois — Arquiteto e Auditor. Leitor, DBA e DEV rodam em Opus, com o diretor revisando
-o que entregam. Está no `model:` de cada definição.
+**Modelo por agente** (decisão do Lucas, 03/09/2026, revista no mesmo dia por cota de uso): todos os
+agentes rodam em Opus, com o diretor revisando o que entregam. Está no `model:` de cada definição.
 
 ## Regras da casa (herdadas do Prev, valem aqui)
 
