@@ -74,6 +74,28 @@ GRAVA = {
 # histórico. Não é redundância: `gov_prazo_regras` RECUSA um prazo PERDIDO sem
 # `prazos.motivo`, e o gatilho não lê o histórico. Sem isto, registrar prazo
 # perdido dava erro do banco na cara de quem clicou — no pior dia do escritório.
+# Os campos de GRAVA que são DATA. As colunas são TEXT (é assim que o app
+# compara datas), e TEXT aceita 31/02/2026 sem reclamar: a data impossível
+# entraria calada e depois nenhuma conta bateria. Quem recusa é
+# `_data_do_calendario`, e o recado sobe como ValueError — a mesma porta por
+# onde já sobe a recusa do gate.
+CAMPOS_DATA = {"transito_em", "cumprido_em", "novo_vencimento", "notificacao_enviada_em"}
+
+
+def _data_do_calendario(nome, valor):
+    """AAAA-MM-DD (ou DD/MM/AAAA) que existe. Senão, ValueError legível."""
+    from datetime import date as _date
+    s = valor.strip()
+    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", s):
+        dd, mm, aa = s.split("/")
+        s = f"{aa}-{mm}-{dd}"
+    try:
+        return _date.fromisoformat(s).isoformat()
+    except ValueError:
+        raise ValueError(f"“{valor}” não é uma data do calendário — escreva "
+                         f"{nome.replace('_', ' ')} no formato AAAA-MM-DD")
+
+
 MOTIVO_COLUNA = {
     "prazos":     "motivo",
     "incidentes": "motivo",
@@ -493,6 +515,8 @@ def mover(db, entidade, rid, para, pessoa_id=None, papel="ADVOGADO", dados=None)
         alvo = GRAVA.get(campo["nome"])
         valor = (d.get(campo["nome"]) or "").strip() if d.get(campo["nome"]) is not None else None
         if alvo and alvo[0] == entidade and valor:
+            if campo["nome"] in CAMPOS_DATA:
+                valor = _data_do_calendario(campo["nome"], valor)
             db.execute(f"UPDATE {entidade} SET {alvo[1]}=? WHERE id=?", (valor, rid))
 
     motivo = (d.get("motivo") or "").strip() or None

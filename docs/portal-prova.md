@@ -575,3 +575,249 @@ parcela, pendência de processo), validação de tipo dos campos da janela
 `servidor.log`, que num servidor precisa de permissão restrita — a primeira
 linha do erro já não leva dado pessoal, mas o `uvicorn` continua registrando
 tudo o que acontece.
+
+---
+
+# Segunda rodada de correções — o laudo de fechamento
+
+> DEV do portal, 03/09/2026, depois de `docs/auditoria-fechamento.md`. Portal na
+> **8771** contra `trab_prova` (Postgres local), com a conta GESTOR de prova.
+> As escritas que uma prova precisou fazer foram apagadas no fim, e as
+> contagens de controle voltaram ao que estavam (ver "Rastro"). Nenhum nome,
+> CPF, telefone, e-mail ou CNJ aparece aqui.
+
+## 1. Leitura com filtro podre: 0 × 500, e o poço vivo (§7)
+
+O defeito: as telas de fila faziam `db = conectar()` e só depois `int(p[...])`.
+Um filtro não numérico na URL dava `ValueError` **e a conexão nunca voltava ao
+poço** — com `max_size=6`, sete pedidos desses paravam o portal para todo
+mundo, o login incluído.
+
+Duas correções, e as duas são necessárias:
+
+- **`finally: db.close()` em TODA rota de leitura** — 18 rotas GET passaram a
+  ter o corpo dentro de `try`. `Ponte.close()` virou idempotente (`banco.py`):
+  as rotas que já fechavam antes de um `return` no meio agora fecham duas
+  vezes, e devolver a mesma conexão ao poço duas vezes seria pior que o
+  vazamento.
+- **`Filtros` (`app.py`)**: todo parâmetro da URL é lido antes de virar
+  argumento de consulta. Número que não é número, id fora da faixa do `int`,
+  data que não existe, opção fora da lista, texto gigante e caractere de
+  controle viram **filtro ignorado com recado na tela** — nunca exceção. O
+  recado aparece no topo da página, do lado de `erro`/`ok`.
+- `banco.ErroBanco` passou a incluir a família `DataError` (22P02, 22001,
+  22003). As duas entradas de `_RECUSAS` para 22P02 e 22001 eram código morto:
+  nenhum `except` chegava a pegá-las.
+
+```
+$ python3 -c "... SELECT 'abc'::int ..."
+PEGOU: InvalidTextRepresentation 22P02          ← antes passava reto pelo except
+```
+
+**32 requisições GET com lixo em todos os parâmetros de todas as telas:**
+
+```
+/processos?advogado=abc                200  id não numérico              (aviso)
+/processos?empresa=1e3                 200  notação científica           (aviso)
+/processos?advogado=99999999999999     200  id fora da faixa do int      (aviso)
+/processos?fase=%00%01&trt=xxx…        200  byte nulo e texto gigante    (aviso)
+/processos?falta=coisa-nenhuma         200  opção fora da lista          (aviso)
+/processos?q=yyy… (5.000 letras)       200  busca gigante                (aviso)
+/clientes?responsavel=x                200  /clientes?captador=-1        200
+/clientes?responsavel=0x10&canal=zzz…  200  /clientes?setor=' OR 1=1--   200
+/clientes?q=ééé… (400 acentos)         200  /audiencias?responsavel=x    200
+/audiencias?janela=99999999999         200  janela fora da faixa (22003) (aviso)
+/audiencias?janela=-5                  200  /audiencias?janela=abc       200
+/audiencias?tipo=ttt…&situacao=nada    200  /prazos?responsavel=abc      200
+/prazos?responsavel=2147483648         200  /prazos?situacao="><script>  200
+/prazos?origem=ooo…                    200  /conferencias?dono=abc       200
+/conferencias?dono=1.5                 200  /conferencias?entidade=../.. 200
+/conferencias?situacao=sss…            200  /tarefas?quem=abc            200
+/tarefas?quem=99999999999999999999     200  /tarefas?grupo=%00&tipo=ppp… 200
+/tarefas?situacao=nada&quem=-3         200  /testemunhas?empresa=abc&processo=xyz 200
+/testemunhas?empresa=1e9&q=www…        200  /empresas?situacao=eee…&pagamento=%00 200
+/empresas?q='; DROP TABLE empresas;--  200
+
+32 requisições · respostas 500: 0
+```
+
+**O poço, depois delas.** Vinte pedidos podres em sequência (o dobro do que
+antes bastava para derrubar tudo), e então o login de outra pessoa:
+
+```
+20 pedidos podres em 0,9 s · códigos: [200]
+POST /entrar depois do lixo:  302  (0,05 s)      ← era 500 em 20,0 s (PoolTimeout)
+conexões abertas no Postgres depois de tudo: 3   (o poço tem 6)
+```
+
+**As 33 telas, com sessão nova, depois do lixo:** `/ /clientes /processos
+/audiencias /prazos /empresas /testemunhas /conferencias /tarefas /equipe
+/fluxos /painel /saude /api/agora /entrar /senha`, mais oito recortes filtrados
+e as cinco fichas (`/clientes/{id} /processos/{id} /audiencias/{id}
+/empresas/{id} /testemunhas/{id}`) → **todas 200, 0 fora de 200**.
+
+`servidor.log` da rodada inteira (lixo + poço + chips + escritas + repasse):
+**0 tracebacks, 0 respostas 500**.
+
+## 2. A chave do rastro da execução (§9)
+
+`execucao.registrar` montava a chave como `exec:<segundo>:<tentativa>`. Duas
+rodadas dentro do mesmo segundo geravam a MESMA chave, e a segunda estourava em
+`UniqueViolation` — no INSERT do próprio rastro, ou seja, **sem deixar rastro
+nenhum**, que é o oposto exato do que a função existe para fazer.
+
+Reproduzido antes e depois, duas rodadas sem `sleep` entre elas:
+
+```
+ANTES   linhas antes=0  depois=1
+        erro: UniqueViolation: duplicate key … automacao_log_automacao_chave_key
+        chaves: ['exec:2026-09-03T20:25:28:1']
+
+DEPOIS  linhas antes=0  depois=2
+        erro: nenhum
+        chaves: ['exec:2026-09-03T20:25:51.908217:1:e0f2',
+                 'exec:2026-09-03T20:25:51.911123:1:4668']
+```
+
+A chave leva microssegundos **e** quatro dígitos de sorteio: os microssegundos
+resolvem duas rodadas no mesmo processo, o sorteio cobre dois processos (o
+launchd e alguém no terminal) caindo no mesmo microssegundo. O segundo continua
+legível no começo da chave, que é o que se lê ao investigar. A linha de prova
+usou o código `PROVA_COLISAO` e foi apagada.
+
+## 3. Chip × fila: o contador conta dentro do recorte (§4)
+
+O `Recorte` que já corrigia `/processos` e `/audiencias` foi aplicado a
+`/clientes` (etapas e origens), `/tarefas` (grupos, tipos, sem dono),
+`/conferencias` (tipos, onde) e `/prazos` (situações, tipos). Cada chip conta o
+recorte **sem a sua própria dimensão** — contá-lo com o próprio filtro daria a
+interseção, e o chip da etapa em que já se está mostraria o total dele e os
+outros, zero.
+
+**Prova A — o número do chip é o tamanho da fila que ele abre.** Para cada chip
+de seis telas filtradas, o script segue o link do próprio chip e compara:
+
+```
+/clientes?setor=Jurídico            12 chips  ok
+/clientes?vivos=1                   12 chips  ok
+/tarefas?tipo=ANDAMENTO&quem=todas   7 chips  ok
+/tarefas?grupo=Jurídico&quem=todas   7 chips  ok
+/conferencias?entidade=empresas      1 chip   ok
+/conferencias?tipo=EMPRESA_AMBIGUA  10 chips  ok
+
+49 chips conferidos · divergências: 0
+```
+
+**Prova B — as seis divergências do laudo, contra `SELECT COUNT(*)` por fora:**
+
+```
+o que                                          tela   count(*)
+chip "Documentação" em ?setor=Jurídico            0          0   ok   (era 19)
+chip "Cancelado" em ?vivos=1                      0          0   ok   (era 169)
+chip "sem dono" em ?tipo=ANDAMENTO               73         73   ok   (era 191)
+chip "sem numero" em ?entidade=empresas           0          0   ok   (era 106)
+origem "indicacao" em ?vivos=1                    1          1   ok
+onde "empresas" em ?tipo=SEM_NUMERO               0          0   ok
+
+divergências: 0
+```
+
+Chip com 0 no recorte **some** das dimensões de vocabulário aberto (tipo de
+conferência, origem, grupo) — a saída é o chip "todos", que continua lá. Nas
+dimensões do MAPA (etapa do cliente, situação do prazo, situação da audiência)
+o chip com 0 **continua na barra**, como já era em `/processos`: sem ele não
+haveria como navegar para fora do filtro atual.
+
+## 4. Repasse: a data e a fase (§7, caso 14)
+
+`POST /processos/{id}/repasse` aceitava `entregue_ao_financeiro_em =
+31/02/2026` num processo em CONHECIMENTO. As colunas são TEXT (é assim que o
+app compara datas) e TEXT aceita 31/02 calado — quem recusa tem de ser a rota.
+
+```
+o que se tentou                                http  recado
+processo em CONHECIMENTO (fase errada)          302  este processo está em conhecimento, e o
+                                                     repasse só se registra quando o dinheiro
+                                                     entrou (fase recebendo). Mova a fase primeiro
+entrega em 31/02/2026                           302  “31/02/2026” não é uma data do calendário…
+repasse em 2026-02-31                           302  “2026-02-31” não é uma data do calendário…
+entrega no futuro (2030-01-01)                  302  a data da entrega ao financeiro está no futuro…
+sem a data de entrega                           302  informe a data em que a referência foi entregue…
+valor ilegível ("uns mil reais")                302  não entendi o valor … — escreva como 1.234,56
+sem valor e sem motivo                          302  informe o valor repassado — ou … o motivo
+
+repasses gravados por estas sete tentativas: 0
+```
+
+E a porta continua aberta para o caso certo: repasse válido num processo em
+RECEBENDO → `302 ok: repasse registrado`, e a consulta do gate
+`repasse_registrado` passa a devolver sim (RECEBENDO → ENCERRADO destrava).
+A linha foi apagada em seguida.
+
+O formulário também deixou de aparecer fora de RECEBENDO (`processo.html`), mas
+**quem impede é o servidor**: o botão que some é conveniência.
+
+A mesma conferência de data entrou onde havia o mesmo risco: a `prazo` da
+pendência nova (`app.py`) e os campos de data da janela de transição
+(`fluxo.CAMPOS_DATA`: `transito_em`, `cumprido_em`, `novo_vencimento`,
+`notificacao_enviada_em`).
+
+```
+2026-02-31   → recusado: “2026-02-31” não é uma data do calendário …
+31/02/2026   → recusado
+31/12/2026   → 2026-12-31        (aceita o formato do teclado e normaliza)
+ontem        → recusado
+```
+
+## 5. Os menores do laudo que eram do portal
+
+- **`auth.py`, a tabela impressa** colava e-mail e papel quando o e-mail tinha
+  34+ caracteres (`…com.brADVOGADO`), e duas contas boas pareceram recusadas na
+  primeira leitura. A largura das colunas agora sai do CONTEÚDO. Provado com
+  e-mails de 28 e 44 caracteres: nada se toca, e o nome não é mais truncado.
+- **O recado do id não numérico** era a frase do Python
+  (`invalid literal for int() with base 10: 'abc'`). Virou
+  "escolha a pessoa na lista — o valor recebido não é um cadastro do
+  escritório", num lugar só (`_pessoa_do_form`), usado pelas quatro rotas que
+  recebem `pessoa_id` de formulário.
+- **`/tarefa/{id}/status` com um status desconhecido** respondia "tarefa
+  atualizada" sem nada ter mudado. O pior recado é o que mente: agora recusa
+  dizendo qual valor não serve.
+
+## 6. Não houve regressão nas escritas (§7, a parte que já passava)
+
+As catorze recusas de escrita, de novo, com o código corrigido:
+
+```
+fora do mapa: conhecimento → recebendo   302   não existe caminho da etapa atual para RECEBENDO
+gate: sobrestar sem motivo               302   escreva o motivo da mudança
+processo que não existe                  302   não existe caminho da etapa atual para RECURSAL
+entidade fora do mapa (/mover/tarefas/1) 302   volta para /
+transitar com data que não existe        302   (parou antes, no gate da decisão)
+dono do atendimento não numérico         302   escolha a pessoa na lista …
+dono do atendimento inexistente          302   esse campo aponta para um registro que não existe … (FK)
+pendência com tipo fora da lista         302   o valor não está entre os que este campo aceita … (CHECK)
+pendência com prazo impossível           302   “2026-02-31” não é uma data do calendário …
+dono de conferência não numérico         302   escolha a pessoa na lista …
+dono de conferência inexistente          302   esse campo aponta para um registro que não existe … (FK)
+status de tarefa fora da lista           302   “NAO_EXISTE” não é uma situação de tarefa
+anotação em branco                       302   escreva a anotação
+POST sem o token de CSRF                 403
+
+respostas 500: 0 · o processo de prova continua em CONHECIMENTO
+```
+
+`conferir.py --dsn …/trab_prova` depois de tudo: **TUDO CONFERE**.
+
+## Rastro desta rodada
+
+- `trab_prova`: as escritas que as provas fizeram (um repasse e a linha de
+  `auditoria` que o acompanha; uma linha `PROVA_COLISAO` em `automacao_log`)
+  foram apagadas. No fim: `repasses` 0, `auditoria` 0, `anotacoes` MANUAL 0,
+  `pendencias` MANUAL 0, `automacao_log` sem `PROVA_COLISAO`, `processos` 3.855,
+  o processo de prova ainda em CONHECIMENTO.
+- Portal: subiu na 8771, derrubado por `./parar.sh`. A 8770 (o Prev) e a 8700
+  (o financeiro) nunca foram tocadas. Nenhuma chamada ao Supabase.
+- Arquivos alterados: `app.py`, `banco.py`, `execucao.py`, `fluxo.py`,
+  `auth.py`, `templates/base.html`, `templates/tarefas.html`,
+  `templates/processo.html`, e estes dois documentos. Nenhum commit.

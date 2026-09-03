@@ -191,10 +191,17 @@ if __name__ == "__main__":
         else:
             print(f"\n{len(novos)} acesso(s) criado(s). A senha aparece UMA vez — "
                   f"anote e entregue:\n")
-            print(f"{'pessoa':<34}{'entra com':<34}{'perfil':<12}senha provisória")
-            print("-" * 100)
+            # A largura sai do CONTEÚDO, não de um número escolhido a olho: com
+            # colunas fixas de 34, e-mail de 34 caracteres ou mais saía colado
+            # no papel (`…com.brADVOGADO`) e duas contas boas pareciam
+            # recusadas na leitura. Quem entrega senha lê esta tabela uma vez e
+            # não pode ficar em dúvida sobre onde acaba o e-mail.
+            larg = lambda titulo, i: max(len(titulo), *(len(str(l[i])) for l in novos)) + 2
+            w_n, w_e, w_p = larg("pessoa", 0), larg("entra com", 1), larg("perfil", 2)
+            print(f"{'pessoa':<{w_n}}{'entra com':<{w_e}}{'perfil':<{w_p}}senha provisória")
+            print("-" * (w_n + w_e + w_p + 20))
             for nome, email, papel, senha in novos:
-                print(f"{nome[:32]:<34}{email:<34}{papel:<12}{senha}")
+                print(f"{nome:<{w_n}}{email:<{w_e}}{papel:<{w_p}}{senha}")
             print("\nNa primeira entrada o sistema obriga a trocar a senha.")
     else:
         print("uso: python3 auth.py equipe")

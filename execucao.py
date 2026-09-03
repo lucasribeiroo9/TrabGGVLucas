@@ -25,6 +25,7 @@ deixa a exceção subir. Quem chama decide se tenta de novo — `com_retry` faz 
 """
 import json
 import os
+import secrets
 import sys
 import time
 import traceback
@@ -86,6 +87,30 @@ class _Execucao:
         self.db.commit()
 
 
+def _chave(tentativa):
+    """A chave da linha de rastro. Única por EXECUÇÃO, não por segundo.
+
+    A regra de idempotência do motor usa `UNIQUE (automacao, chave)`, e
+    execução não é idempotente: cada rodada é um fato novo. Escrita como
+    `exec:<segundo>:<tentativa>`, duas rodadas dentro do mesmo segundo geravam
+    a MESMA chave e a segunda estourava em `UniqueViolation` — e estourava no
+    INSERT do próprio rastro, ou seja, a rodada morria **sem deixar rastro
+    nenhum**, que é o oposto exato do que este arquivo existe para fazer. Com
+    launchd 3×/dia não acontecia; num retry, num `--vigiar` que dispara a
+    rodada, ou em dois operadores rodando à mão, acontece (auditoria de
+    03/09/2026, §9).
+
+    Agora a chave leva microssegundos **e** quatro dígitos hexadecimais de
+    sorteio. Os microssegundos sozinhos já resolveriam o caso de duas rodadas
+    seguidas no mesmo processo; o sorteio cobre o caso de dois processos
+    diferentes (o launchd e alguém no terminal) caindo no mesmo microssegundo,
+    que é raro e não é impossível. O segundo continua legível no começo da
+    chave, que é o que se lê quando se investiga.
+    """
+    return (f"exec:{agora().strftime('%Y-%m-%dT%H:%M:%S.%f')}"
+            f":{tentativa}:{secrets.token_hex(2)}")
+
+
 class registrar:
     """Contexto que grava uma linha de execução, dê certo ou dê errado."""
 
@@ -97,10 +122,7 @@ class registrar:
     def __enter__(self):
         if self._meu_db:
             self.db = banco.conectar()
-        # a chave precisa ser única por execução: a regra de idempotência do
-        # motor usa (automacao, chave), e execução não é idempotente — cada
-        # rodada é um fato novo.
-        chave = f"exec:{agora().strftime('%Y-%m-%dT%H:%M:%S')}:{self.tentativa}"
+        chave = _chave(self.tentativa)
         self.e = _Execucao(self.db, self.codigo, self.tentativa, chave)
         return self.e
 

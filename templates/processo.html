@@ -194,7 +194,17 @@
 
   {# Sem este formulário o gate `repasse_registrado` existia sem porta: o
      processo em RECEBENDO não podia ser encerrado por ninguém pelo portal.
-     O token de CSRF é injetado pela trava, em todo formulário do sistema. #}
+     O token de CSRF é injetado pela trava, em todo formulário do sistema.
+
+     O formulário só aparece em RECEBENDO — e quem IMPEDE fora dela é o
+     servidor, não este `if`: referência de repasse num processo que ainda está
+     em conhecimento não destrava nada e fica no banco dizendo que houve
+     dinheiro onde não houve. #}
+  {% if p.fase != 'RECEBENDO' %}
+  <p class="sub">O registro da referência abre quando o processo chega a
+    <b>recebendo</b> — é lá que o dinheiro entrou. Este está em
+    <b>{{ p.fase|rotulo }}</b>.</p>
+  {% else %}
   <form method="post" action="/processos/{{ p.id }}/repasse" class="linha-acoes" style="margin-top:12px">
     <b>Registrar a referência do repasse</b>
     <label>valor repassado
@@ -211,6 +221,7 @@
       entrega ao financeiro também. O comprovante entra pelos documentos do
       processo. [CONFIRMAR: se o comprovante deve ser exigido aqui.]</span>
   </form>
+  {% endif %}
 </details>
 
 <details class="cartao" {{ 'open' if pendencias }}>

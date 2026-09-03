@@ -69,6 +69,14 @@ def _erros():
     # ela simplesmente nunca acontece.
     integridade = [sqlite3.IntegrityError]
     operacional = [sqlite3.OperationalError]
+    # Família à parte: o FORMATO do que chegou não serve para a coluna —
+    # 'abc' onde se espera inteiro (22P02), texto maior que o campo (22001),
+    # número fora da faixa do bigint (22003). No SQLite quase não existe (a
+    # coluna aceita qualquer coisa); no Postgres não é IntegrityError nem
+    # OperationalError, é `DataError`. Sem ela aqui, `_RECUSAS` traduzia 22P02
+    # e 22001 sem que `except` nenhum chegasse a pegá-los: duas entradas
+    # mortas, e a recusa virava 500 (auditoria de 03/09/2026, §7).
+    dados = [sqlite3.DataError] if hasattr(sqlite3, "DataError") else []
     try:
         from psycopg import errors as e
     except ImportError:
@@ -84,12 +92,16 @@ def _erros():
         operacional += [e.OperationalError, e.UndefinedTable, e.UndefinedColumn,
                         e.InvalidSchemaName, e.DuplicateColumn, e.DuplicateTable,
                         e.DuplicateObject]
-    return tuple(integridade), tuple(operacional)
+        # `DataError` é o pai de InvalidTextRepresentation (22P02),
+        # StringDataRightTruncation (22001), NumericValueOutOfRange (22003) e
+        # DatetimeFieldOverflow — pegar o pai cobre a família inteira.
+        dados += [e.DataError]
+    return tuple(integridade), tuple(operacional), tuple(dados)
 
 
-Integridade, Operacional = _erros()
+Integridade, Operacional, Dados = _erros()
 
-# As duas famílias de uma vez, para quem trata a RECUSA do banco sem precisar
+# As três famílias de uma vez, para quem trata a RECUSA do banco sem precisar
 # saber de qual delas ela veio.
 #
 # Existe porque `except (banco.Integridade, banco.Operacional)` NÃO funciona:
@@ -102,7 +114,10 @@ Integridade, Operacional = _erros()
 #
 #     except banco.ErroBanco as e:                           # certo
 #     except (banco.Integridade, banco.Operacional) as e:    # TypeError
-ErroBanco = Integridade + Operacional
+#
+# `Dados` entrou na tupla em 03/09/2026: sem ela, `SELECT 'abc'::int` passava
+# reto pelo `except banco.ErroBanco` e virava 500.
+ErroBanco = Integridade + Operacional + Dados
 
 
 # ------------------------------------------------------------ a tradução
@@ -495,12 +510,31 @@ class Ponte:
 
     def close(self):
         """Devolve ao poço. Uma transação aberta seria herdada pela próxima
-        tela, então volta limpa."""
+        tela, então volta limpa.
+
+        **Chamar duas vezes não devolve duas vezes.** As rotas agora fecham no
+        `finally`, e várias delas já fechavam antes de um `return` no meio do
+        caminho; sem esta trava, a mesma conexão voltaria ao poço duas vezes e
+        duas telas passariam a escrever na mesma sessão do Postgres — defeito
+        muito pior do que o vazamento que o `finally` veio corrigir.
+        """
+        pg, self._pg = self._pg, None
+        if pg is None:
+            return
         try:
-            self._pg.rollback()
+            pg.rollback()
         except Exception:
             pass
-        self._poco.putconn(self._pg)
+        self._poco.putconn(pg)
+
+    # `with conectar() as db:` devolve a conexão ao poço mesmo se o corpo
+    # levantar. É o mesmo contrato do `finally`, escrito uma vez só.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, tipo, valor, tb):
+        self.close()
+        return False
 
 
 def _uri():

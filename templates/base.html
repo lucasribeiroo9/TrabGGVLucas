@@ -70,6 +70,9 @@
 <main>
 {% if request.query_params.get('erro') %}<div class="aviso erro">{{ request.query_params.get('erro') }}</div>{% endif %}
 {% if request.query_params.get('ok') %}<div class="aviso ok">{{ request.query_params.get('ok') }}</div>{% endif %}
+{# Filtro da URL que o servidor não soube ler: a tela abre igual, sem o filtro,
+   e diz o que ignorou. Antes disso era 500 — e a conexão não voltava ao poço. #}
+{% for a in avisos or [] %}<div class="aviso erro">{{ a }}</div>{% endfor %}
 {% block corpo %}{% endblock %}
 </main>
 <script>

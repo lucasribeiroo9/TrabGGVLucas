@@ -294,3 +294,38 @@ como guardá-lo no Keychain — o recado sai no terminal em vez do fim do
    (`v_audiencias_sem_preparacao`) e o farol 15/20 do pré-processual continuam
    como o arquiteto propôs. O portal usa os dois; se o escritório trabalha com
    outra folga, muda-se a view, não o código.
+
+## Achados da auditoria de fechamento que NÃO são do portal (para o DBA)
+
+> Anotados pelo DEV em 03/09/2026, ao corrigir o §7 e o §9 do laudo
+> `docs/auditoria-fechamento.md`. Não toquei em `migrar.py`, `normalizar.py`,
+> `conferir.py`, `governanca.sql` nem `esquema.sql` — o combinado é que quem
+> mexe neles é o DBA e o arquiteto.
+
+1. **`conferir.py`, precedência `AND … OR`** (laudo §3, defeito 5). A linha de
+   prova de CumPrSe/cálculo escreve
+   `WHERE tipo='DIVERGENCIA_FONTE' AND valor_a LIKE 'STATUS CumPrSe%' OR valor_a LIKE …`.
+   Em SQL, `AND` liga mais forte que `OR`: o `tipo=` prende só ao primeiro
+   `LIKE`, e os demais valem para qualquer tipo. Hoje passa porque nenhum outro
+   tipo tem `valor_a` com esses prefixos — ou seja, a prova está certa por
+   coincidência de dado, não por construção. Cabe um par de parênteses.
+
+2. **`governanca.sql` cria `pessoa_no_setor()` e nenhum gatilho a chama**
+   (laudo §8 e defeito 6). O gate de setor da aprovação da inicial vive só em
+   `fluxo.py`, como os outros gates de negócio, e isso é coerente com o
+   contrato escrito em `governanca.sql:56` — mas a mensagem do commit `bc19fd8`
+   promete "gate de setor verificado no banco", e no banco um
+   `UPDATE clientes SET status='PETICAO_EM_CRIACAO'` passa por qualquer pessoa.
+   Ou o gatilho passa a chamar a função, ou a função sai e a promessa muda.
+   **Decisão do arquiteto**, não do portal.
+
+3. **`Banco.guardar()` devolve vazio em `--sql-saida`** (defeito 8): o plano B
+   `dados/carga_real.sql` nasce sem as contas de acesso. É coerente com "a
+   carga é para antes do portal", mas não está no `--help` de `migrar.py`.
+
+4. **[CONFIRMAR pergunta 30] `equipe.GRUPO_DA_ETAPA["Gestão"]`** hoje aponta
+   para `Direção` (antes apontava para `Petição Inicial`). Depois da resposta 8
+   a aprovação da inicial passou a ser da etapa de grupo `Petição Inicial` no
+   próprio mapa, e "Gestão" só sobra em `PRAZO → PERDIDO`, que é registro de
+   quem gere o escritório. É **rótulo de tela**, não regra — mas quem responde
+   qual setor é esse é o Lucas. Fica como está, marcado no código.
