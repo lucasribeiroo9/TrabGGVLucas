@@ -1,0 +1,20 @@
+# ---- dado de cliente NUNCA sobe ----
+trabalhista.db
+trabalhista.db-*
+segredos.db
+segredos.db-*
+dados/
+lotes/
+*.log
+
+# ---- ambiente e cache ----
+.venv/
+__pycache__/
+*.pyc
+servidor.pid
+.DS_Store
+*.xlsx
+*.xlsm
+
+# esquema bruto do Airtable: só ids e opções, mas fica fora por prudência
+docs/.airtable_schema_raw.json
