@@ -79,6 +79,26 @@ def _digitos(v):
     return re.sub(r"\D", "", str(v or ""))
 
 
+def _para_centavos(v):
+    """"1.234,56" → 123456. Vazio devolve None; o que não é dinheiro levanta.
+
+    Dinheiro é inteiro em centavos no banco, e a conversão é aqui e não no
+    JavaScript: quem escreve "1.234,56" e quem escreve "1234.56" tem de chegar
+    ao mesmo inteiro, e o campo que não dá para ler tem de PARAR o pedido, não
+    virar zero. Zero é um valor — "repassei R$ 0,00" é uma afirmação diferente
+    de "não consegui ler o que você digitou".
+    """
+    s = str(v or "").strip().replace("R$", "").replace(" ", "").replace("\xa0", "")
+    if not s:
+        return None
+    if "," in s:                       # 1.234,56 — o ponto é separador de milhar
+        s = s.replace(".", "").replace(",", ".")
+    try:
+        return int(round(float(s) * 100))
+    except ValueError:
+        raise ValueError(f"não entendi o valor “{v}” — escreva como 1.234,56")
+
+
 def _rotulo(v):
     """CODIGO_ASSIM vira 'codigo assim' — o vocabulário do banco na tela."""
     return (v or "").replace("_", " ").lower() if v else ""
@@ -167,6 +187,85 @@ def _volta(req, padrao, ok=None, erro=None):
     if erro:
         return RedirectResponse(f"{padrao}{junta}erro={quote(str(erro)[:400])}", 302)
     return RedirectResponse(f"{padrao}{junta}ok={quote(str(ok or 1))}", 302)
+
+
+class Recorte:
+    """O filtro da tela, montado por dimensão — para todo contador contar DENTRO dele.
+
+    A regra da casa diz que número na tela sai de consulta e conta dentro do
+    recorte ativo. O chip é o caso difícil: em `/processos?fase=RECURSAL`, o
+    chip "sem reclamada · 11" contava o escritório inteiro enquanto a fila
+    embaixo dele tinha 0 — clicar entregava uma fila vazia. Contador global em
+    tela filtrada não é imprecisão, é oferta de trabalho que não existe.
+
+    E o chip conta o recorte **sem a sua própria dimensão**: os três chips de
+    qualidade são alternativas entre si, e contá-los já com `falta=numero`
+    aplicado daria a interseção — "sem reclamada" viraria "sem reclamada E sem
+    número", que ninguém pediu. Por isso `onde(exceto=…)`.
+    """
+
+    def __init__(self):
+        self.partes = []                      # (dimensão, sql, [args])
+
+    def mais(self, dimensao, sql, *args):
+        self.partes.append((dimensao, sql, list(args)))
+
+    def onde(self, exceto=None):
+        """(sql do WHERE, tupla de argumentos). `exceto` tira uma dimensão."""
+        fora = {exceto} if isinstance(exceto, str) else set(exceto or ())
+        sql, args = ["1=1"], []
+        for dim, pedaco, vs in self.partes:
+            if dim in fora:
+                continue
+            sql.append(pedaco)
+            args += vs
+        return " AND ".join(sql), tuple(args)
+
+
+def _conta(db, molde, recorte, exceto=None, **fmt):
+    """Um COUNT(*) dentro do recorte. `molde` traz {filtro} onde o WHERE entra."""
+    filtro, args = recorte.onde(exceto)
+    return db.execute(molde.format(filtro=filtro, **fmt), args).fetchone()[0]
+
+
+# O que o Postgres recusa, dito em português de operador. A chave é o SQLSTATE.
+# A mensagem crua ("new row for relation … violates check constraint
+# …_tipo_check") é escrita para quem mantém o banco, não para quem clicou — e
+# quem clicou é que precisa saber o que fazer agora.
+_RECUSAS = {
+    "23503": "esse campo aponta para um registro que não existe (pessoa, processo ou "
+             "cliente apagado, ou escolhido fora da lista). Escolha um da lista",
+    "23514": "o valor não está entre os que este campo aceita. Escolha um dos "
+             "oferecidos na tela",
+    "23505": "já existe um registro com esse valor, e este campo não aceita repetido",
+    "23502": "falta preencher um campo obrigatório",
+    "22P02": "o formato do que foi digitado não serve para este campo "
+             "(data, número ou valor)",
+    "22001": "o texto digitado é mais longo do que o campo aceita",
+}
+
+
+def _recado(e):
+    """A recusa do banco escrita para quem clicou.
+
+    Duas fontes, dois tratamentos. A recusa da GOVERNANÇA vem de um RAISE do
+    PL/pgSQL e já é escrita para gente ler ("transição de status fora do fluxo
+    CLIENTE: …") — dela só se tira o cabeçalho técnico. A recusa do ESQUEMA
+    (CHECK, FK, UNIQUE) vem em inglês e citando o nome do constraint; essa vira
+    frase, com o nome do constraint entre parênteses no fim para quem for
+    investigar depois.
+
+    Em nenhum dos dois casos passa mais que a primeira linha: as linhas de
+    DETAIL de um erro do Postgres trazem **o registro inteiro** (`Failing row
+    contains …`: nome, CPF, telefone), e isso iria parar na barra de endereço
+    do navegador e no log do servidor. Erro não é lugar de vazar cadastro.
+    """
+    primeira = str(e).splitlines()[0].replace("ERROR:  ", "").strip()
+    estado = getattr(e, "sqlstate", None) or ""
+    if estado in _RECUSAS:
+        alvo = getattr(getattr(e, "diag", None), "constraint_name", None)
+        return _RECUSAS[estado] + (f" ({alvo})" if alvo else "")
+    return primeira
 
 
 def _qs(req, **mudar):
@@ -435,19 +534,24 @@ async def cliente_responsavel(req: Request):
     f = await req.form()
     quem = f.get("pessoa_id")
     db = conectar()
-    if quem == "eu":
-        quem = _eu(db, u)
-    antes = db.execute("SELECT responsavel_id FROM clientes WHERE id=?", (cid,)).fetchone()
-    db.execute("UPDATE clientes SET responsavel_id=? WHERE id=?",
-               (int(quem) if quem else None, cid))
-    db.execute("""INSERT INTO auditoria (tabela, registro_id, acao, campo, valor_antigo,
-                    valor_novo, pessoa_id)
-                  VALUES ('clientes',?,'UPDATE','responsavel_id',?,?,?)""",
-               (cid, str(antes[0]) if antes and antes[0] else None,
-                str(quem) if quem else None, _eu(db, u)))
-    db.commit()
-    db.close()
-    return _volta(req, f"/clientes/{cid}", ok="dono do atendimento alterado")
+    erro = None
+    try:
+        if quem == "eu":
+            quem = _eu(db, u)
+        antes = db.execute("SELECT responsavel_id FROM clientes WHERE id=?", (cid,)).fetchone()
+        db.execute("UPDATE clientes SET responsavel_id=? WHERE id=?",
+                   (int(quem) if quem else None, cid))
+        db.execute("""INSERT INTO auditoria (tabela, registro_id, acao, campo, valor_antigo,
+                        valor_novo, pessoa_id)
+                      VALUES ('clientes',?,'UPDATE','responsavel_id',?,?,?)""",
+                   (cid, str(antes[0]) if antes and antes[0] else None,
+                    str(quem) if quem else None, _eu(db, u)))
+        db.commit()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
+    return _volta(req, f"/clientes/{cid}", ok="dono do atendimento alterado", erro=erro)
 
 
 async def pendencia_resolver(req: Request):
@@ -460,12 +564,13 @@ async def pendencia_resolver(req: Request):
     f = await req.form()
     acao = f.get("acao")
     db = conectar()
-    dono = db.execute("SELECT cliente_id, processo_id FROM pendencias WHERE id=?",
-                      (pid,)).fetchone()
-    destino = (f"/clientes/{dono['cliente_id']}" if dono and dono["cliente_id"]
-               else f"/processos/{dono['processo_id']}" if dono else "/clientes")
+    destino = "/clientes"
     erro = None
     try:
+        dono = db.execute("SELECT cliente_id, processo_id FROM pendencias WHERE id=?",
+                          (pid,)).fetchone()
+        destino = (f"/clientes/{dono['cliente_id']}" if dono and dono["cliente_id"]
+                   else f"/processos/{dono['processo_id']}" if dono else "/clientes")
         if acao == "recebida":
             db.execute("UPDATE pendencias SET recebido_em=date('now') WHERE id=?", (pid,))
         elif acao == "dispensada":
@@ -477,9 +582,10 @@ async def pendencia_resolver(req: Request):
         elif acao == "solicitada":
             db.execute("UPDATE pendencias SET solicitado_em=date('now') WHERE id=?", (pid,))
         db.commit()
-    except (banco.Integridade, banco.Operacional) as e:
-        erro = str(e).splitlines()[0]
-    db.close()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
     return _volta(req, destino, ok="pendência atualizada", erro=erro)
 
 
@@ -491,7 +597,12 @@ async def pendencia_nova(req: Request):
     cid = int(req.path_params["id"])
     db = conectar()
     erro = None
-    tipo = f.get("tipo") or "OUTRO"
+    # o tipo vem do formulário e não se chuta: "OUTRO" no lugar do que a pessoa
+    # quis dizer é o sistema inventando, e é o tipo DOCUMENTO que trava a etapa
+    tipo = (f.get("tipo") or "").strip()
+    if not tipo:
+        db.close()
+        return _volta(req, f"/clientes/{cid}", erro="escolha o tipo da pendência")
     try:
         db.execute("""INSERT INTO pendencias (cliente_id, tipo, documento_tipo, descricao,
                         obrigatorio, responsavel_id, prazo, solicitado_em, origem)
@@ -503,9 +614,10 @@ async def pendencia_nova(req: Request):
                     f.get("prazo") or None,
                     date.today().isoformat() if f.get("ja_pedida") == "1" else None))
         db.commit()
-    except (banco.Integridade, banco.Operacional) as e:
-        erro = str(e).splitlines()[0]
-    db.close()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
     return _volta(req, f"/clientes/{cid}", ok="pendência aberta", erro=erro)
 
 
@@ -516,27 +628,27 @@ async def processos(req: Request):
         return r
     p = req.query_params
     db = conectar()
-    onde, args = ["1=1"], []
+    rec = Recorte()
     for campo, coluna in (("fase", "pr.fase"), ("trt", "pr.trt"), ("vara", "pr.vara"),
                           ("rito", "pr.rito"), ("complexidade", "pr.complexidade"),
                           ("situacao_execucao", "pr.situacao_execucao")):
         if p.get(campo):
-            onde.append(f"{coluna} = ?"); args.append(p[campo])
+            rec.mais(campo, f"{coluna} = ?", p[campo])
     if p.get("advogado"):
-        onde.append("pr.advogado_id = ?"); args.append(int(p["advogado"]))
+        rec.mais("advogado", "pr.advogado_id = ?", int(p["advogado"]))
     if p.get("empresa"):
-        onde.append("pr.empresa_id = ?"); args.append(int(p["empresa"]))
+        rec.mais("empresa", "pr.empresa_id = ?", int(p["empresa"]))
     if p.get("q"):
-        onde.append("(pr.nome_parte ILIKE ? OR c.nome ILIKE ? OR pr.numero_cnj_digitos ILIKE ?)")
         q = p["q"]
-        args += ["%" + q + "%", "%" + q + "%", "%" + _digitos(q) + "%"]
+        rec.mais("q", "(pr.nome_parte ILIKE ? OR c.nome ILIKE ? OR pr.numero_cnj_digitos ILIKE ?)",
+                 "%" + q + "%", "%" + q + "%", "%" + _digitos(q) + "%")
     if p.get("falta") == "empresa":
-        onde.append("pr.empresa_id IS NULL")
+        rec.mais("falta", "pr.empresa_id IS NULL")
     if p.get("falta") == "numero":
-        onde.append("(pr.numero_cnj IS NULL OR pr.numero_cnj = '')")
+        rec.mais("falta", "(pr.numero_cnj IS NULL OR pr.numero_cnj = '')")
     if p.get("falta") == "valor":
-        onde.append("pr.valor_causa_centavos IS NULL")
-    filtro = " AND ".join(onde)
+        rec.mais("falta", "pr.valor_causa_centavos IS NULL")
+    filtro, args = rec.onde()
 
     linhas = db.execute(f"""SELECT pr.id, pr.numero_cnj, pr.fase, pr.trt, pr.vara, pr.rito,
                 pr.complexidade, pr.valor_causa_centavos, pr.situacao_execucao,
@@ -556,31 +668,58 @@ async def processos(req: Request):
     soma = db.execute(f"""SELECT COALESCE(SUM(pr.valor_causa_centavos),0) FROM processos pr
              JOIN clientes c ON c.id = pr.cliente_id WHERE {filtro}""", tuple(args)).fetchone()[0]
 
+    # Cada chip e cada lista de filtro conta DENTRO do recorte, e sem a sua
+    # própria dimensão — senão o chip da fase em que já se está mostraria o
+    # total dele mesmo e os outros mostrariam zero, e ninguém sairia de lá.
+    de, arg_de = rec.onde("fase")
+    de_tr, arg_tr = rec.onde("trt")
+    de_va, arg_va = rec.onde("vara")
+    de_ad, arg_ad = rec.onde("advogado")
+    de_em, arg_em = rec.onde("empresa")
+    de_ex, arg_ex = rec.onde("situacao_execucao")
+    # os três de qualidade são alternativas entre si: fora a dimensão `falta`
+    de_q, arg_q = rec.onde("falta")
+    conta = ("""SELECT COUNT(*) FROM processos pr
+                JOIN clientes c ON c.id = pr.cliente_id
+                WHERE """ + de_q + " AND ")
     ctx = dict(
         linhas=linhas, total=total, soma=soma, p=p,
         # a view chama a coluna de `etapa`; o alias deixa as três telas de fila
-        # falarem a mesma língua (`.nome`) sem cada uma lembrar disso
-        fases=db.execute("""SELECT codigo, etapa nome, ordem, registros FROM v_funil_etapas
-                            WHERE fluxo='PROCESSO' ORDER BY ordem""").fetchall(),
-        trts=db.execute("""SELECT trt, COUNT(*) n FROM processos WHERE trt IS NOT NULL
-                           GROUP BY trt ORDER BY n DESC LIMIT 30""").fetchall(),
-        varas=db.execute("""SELECT vara, COUNT(*) n FROM processos WHERE vara IS NOT NULL
-                            GROUP BY vara ORDER BY n DESC LIMIT 40""").fetchall(),
-        advogados=db.execute("""SELECT p.id, p.nome, COUNT(pr.id) n FROM pessoas p
-                                JOIN processos pr ON pr.advogado_id = p.id
-                                GROUP BY p.id, p.nome ORDER BY n DESC""").fetchall(),
-        empresas_l=db.execute("""SELECT e.id, e.nome, COUNT(pr.id) n FROM empresas e
-                                 JOIN processos pr ON pr.empresa_id = e.id
-                                 GROUP BY e.id, e.nome ORDER BY n DESC LIMIT 40""").fetchall(),
-        execucoes=db.execute("""SELECT situacao_execucao s, COUNT(*) n FROM processos
-                                WHERE situacao_execucao IS NOT NULL
-                                GROUP BY situacao_execucao ORDER BY n DESC""").fetchall(),
+        # falarem a mesma língua (`.nome`) sem cada uma lembrar disso. O LEFT
+        # JOIN é de propósito: a etapa com 0 no recorte continua na barra, ou
+        # não haveria como navegar para fora do filtro atual.
+        fases=db.execute(f"""SELECT v.codigo, v.etapa nome, v.ordem,
+                    (SELECT COUNT(*) FROM processos pr JOIN clientes c ON c.id = pr.cliente_id
+                     WHERE {de} AND pr.fase = v.codigo) registros
+                 FROM v_funil_etapas v WHERE v.fluxo='PROCESSO' ORDER BY v.ordem""",
+                         arg_de).fetchall(),
+        trts=db.execute(f"""SELECT pr.trt, COUNT(*) n FROM processos pr
+                 JOIN clientes c ON c.id = pr.cliente_id
+                 WHERE {de_tr} AND pr.trt IS NOT NULL
+                 GROUP BY pr.trt ORDER BY n DESC LIMIT 30""", arg_tr).fetchall(),
+        varas=db.execute(f"""SELECT pr.vara, COUNT(*) n FROM processos pr
+                 JOIN clientes c ON c.id = pr.cliente_id
+                 WHERE {de_va} AND pr.vara IS NOT NULL
+                 GROUP BY pr.vara ORDER BY n DESC LIMIT 40""", arg_va).fetchall(),
+        advogados=db.execute(f"""SELECT ad.id, ad.nome, COUNT(pr.id) n FROM pessoas ad
+                 JOIN processos pr ON pr.advogado_id = ad.id
+                 JOIN clientes c ON c.id = pr.cliente_id
+                 WHERE {de_ad} GROUP BY ad.id, ad.nome ORDER BY n DESC""", arg_ad).fetchall(),
+        empresas_l=db.execute(f"""SELECT e.id, e.nome, COUNT(pr.id) n FROM empresas e
+                 JOIN processos pr ON pr.empresa_id = e.id
+                 JOIN clientes c ON c.id = pr.cliente_id
+                 WHERE {de_em} GROUP BY e.id, e.nome ORDER BY n DESC LIMIT 40""",
+                              arg_em).fetchall(),
+        execucoes=db.execute(f"""SELECT pr.situacao_execucao s, COUNT(*) n FROM processos pr
+                 JOIN clientes c ON c.id = pr.cliente_id
+                 WHERE {de_ex} AND pr.situacao_execucao IS NOT NULL
+                 GROUP BY pr.situacao_execucao ORDER BY n DESC""", arg_ex).fetchall(),
         qualidade=dict(
-            sem_empresa=db.execute("SELECT COUNT(*) FROM processos WHERE empresa_id IS NULL").fetchone()[0],
-            sem_numero=db.execute("""SELECT COUNT(*) FROM processos
-                                     WHERE numero_cnj IS NULL OR numero_cnj=''""").fetchone()[0],
-            sem_valor=db.execute("""SELECT COUNT(*) FROM processos
-                                    WHERE valor_causa_centavos IS NULL""").fetchone()[0],
+            sem_empresa=db.execute(conta + "pr.empresa_id IS NULL", arg_q).fetchone()[0],
+            sem_numero=db.execute(
+                conta + "(pr.numero_cnj IS NULL OR pr.numero_cnj='')", arg_q).fetchone()[0],
+            sem_valor=db.execute(
+                conta + "pr.valor_causa_centavos IS NULL", arg_q).fetchone()[0],
         ),
     )
     ctx["sinais"] = alertas.por_processo(db, [l["id"] for l in linhas])
@@ -692,11 +831,73 @@ async def processo_anotacao(req: Request):
     if not texto:
         return _volta(req, f"/processos/{pid}", erro="escreva a anotação")
     db = conectar()
-    db.execute("""INSERT INTO anotacoes (processo_id, texto, autor_id, origem)
-                  VALUES (?,?,?, 'MANUAL')""", (pid, texto, _eu(db, u)))
-    db.commit()
-    db.close()
-    return _volta(req, f"/processos/{pid}", ok="anotação gravada")
+    erro = None
+    try:
+        db.execute("""INSERT INTO anotacoes (processo_id, texto, autor_id, origem)
+                      VALUES (?,?,?, 'MANUAL')""", (pid, texto, _eu(db, u)))
+        db.commit()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
+    return _volta(req, f"/processos/{pid}", ok="anotação gravada", erro=erro)
+
+
+async def processo_repasse(req: Request):
+    """Registra a REFERÊNCIA do repasse ao cliente — não o repasse.
+
+    Resposta 26 do Lucas: o repasse é do financeiro. O que falta aqui, e é o
+    que o gate `repasse_registrado` lê, é a referência: houve, quando, quanto
+    (ou por que não havia o que repassar) e a data em que foi entregue ao
+    financeiro. Sem esta rota o gate existia sem porta: o processo em RECEBENDO
+    não podia ser encerrado por ninguém pelo portal.
+
+    O dinheiro NÃO se move aqui, e é por isso que a tela pede a data da entrega
+    ao financeiro em vez de um botão "repassar": quem paga é o financeiro, e o
+    que este sistema guarda é a prova de que o caso terminou de verdade.
+
+    Permissão: a mesma da tela de processos, conferida no servidor por
+    `exige()` — igual à da transição RECEBENDO → ENCERRADO que esta referência
+    destrava, que em `fluxo_transicoes` não exige papel nenhum. O CSRF é da
+    trava (`csrf.Trava`), que injeta o token em todo formulário.
+    """
+    u, r = exige(req, "processos")
+    if r:
+        return r
+    pid = int(req.path_params["id"])
+    f = await req.form()
+    db = conectar()
+    erro = None
+    try:
+        motivo = (f.get("sem_valor_motivo") or "").strip() or None
+        valor = None if motivo else _para_centavos(f.get("valor"))
+        # o CHECK da tabela cobra o mesmo; dito aqui, quem clicou lê a razão em
+        # vez do texto do constraint
+        if valor is None and not motivo:
+            raise ValueError("informe o valor repassado — ou, se não havia o que "
+                             "repassar, escreva o motivo")
+        if valor is not None and valor < 0:
+            raise ValueError("valor de repasse não pode ser negativo")
+        entregue = (f.get("entregue_ao_financeiro_em") or "").strip() or None
+        if not entregue:
+            raise ValueError("informe a data em que a referência foi entregue ao "
+                             "financeiro — é ela que fecha o caso")
+        cur = db.execute("""INSERT INTO repasses (processo_id, valor_centavos, data,
+                              sem_valor_motivo, entregue_ao_financeiro_em, observacao)
+                            VALUES (?,?,?,?,?,?)""",
+                         (pid, valor, (f.get("data") or "").strip() or None, motivo, entregue,
+                          (f.get("observacao") or "").strip() or None))
+        # dinheiro tem dono: quem registrou fica na auditoria, não só na linha
+        db.execute("""INSERT INTO auditoria (tabela, registro_id, acao, campo, valor_antigo,
+                        valor_novo, pessoa_id)
+                      VALUES ('repasses',?,'INSERT','processo_id',NULL,?,?)""",
+                   (cur.lastrowid, str(pid), _eu(db, u)))
+        db.commit()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
+    return _volta(req, f"/processos/{pid}", ok="repasse registrado", erro=erro)
 
 
 # =========================================================== audiências
@@ -706,23 +907,24 @@ async def audiencias(req: Request):
         return r
     p = req.query_params
     db = conectar()
-    onde, args = ["1=1"], []
+    rec = Recorte()
     situacao = p.get("situacao") or "abertas"
     if situacao == "abertas":
-        onde.append("a.situacao IN ('DESIGNADA','EM_PREPARACAO')")
+        rec.mais("situacao", "a.situacao IN ('DESIGNADA','EM_PREPARACAO')")
     elif situacao != "todas":
-        onde.append("a.situacao = ?"); args.append(situacao)
+        rec.mais("situacao", "a.situacao = ?", situacao)
     janela = p.get("janela") or "30"
     if janela.isdigit():
-        onde.append("substr(a.data_hora,1,10)::date BETWEEN "
-                    "(now() AT TIME ZONE 'America/Sao_Paulo')::date "
-                    "AND (now() AT TIME ZONE 'America/Sao_Paulo')::date + ?::int")
-        args.append(int(janela))
+        rec.mais("janela",
+                 "substr(a.data_hora,1,10)::date BETWEEN "
+                 "(now() AT TIME ZONE 'America/Sao_Paulo')::date "
+                 "AND (now() AT TIME ZONE 'America/Sao_Paulo')::date + ?::int",
+                 int(janela))
     if p.get("tipo"):
-        onde.append("a.tipo = ?"); args.append(p["tipo"])
+        rec.mais("tipo", "a.tipo = ?", p["tipo"])
     if p.get("responsavel"):
-        onde.append("a.responsavel_id = ?"); args.append(int(p["responsavel"]))
-    filtro = " AND ".join(onde)
+        rec.mais("responsavel", "a.responsavel_id = ?", int(p["responsavel"]))
+    filtro, args = rec.onde()
 
     linhas = db.execute(f"""SELECT a.*, fe.nome situacao_nome, pr.numero_cnj, pr.trt, pr.vara,
                 pr.id proc_id, c.nome cliente, c.id cliente_id, em.nome empresa,
@@ -750,14 +952,29 @@ async def audiencias(req: Request):
         dia = (l["data_hora"] or "")[:10]
         if dia:
             semana.setdefault(dia, []).append(l)
+    de_si, arg_si = rec.onde("situacao")
+    de_ti, arg_ti = rec.onde("tipo")
     ctx = dict(
         linhas=linhas, total=total, p=p, semana=sorted(semana.items()),
-        situacoes=db.execute("""SELECT codigo, etapa nome, registros FROM v_funil_etapas
-                                WHERE fluxo='AUDIENCIA' ORDER BY ordem""").fetchall(),
-        tipos=db.execute("""SELECT tipo, COUNT(*) n FROM audiencias WHERE tipo IS NOT NULL
-                            GROUP BY tipo ORDER BY n DESC""").fetchall(),
+        situacoes=db.execute(f"""SELECT v.codigo, v.etapa nome,
+                    (SELECT COUNT(*) FROM audiencias a
+                     WHERE {de_si} AND a.situacao = v.codigo) registros
+                 FROM v_funil_etapas v WHERE v.fluxo='AUDIENCIA' ORDER BY v.ordem""",
+                             arg_si).fetchall(),
+        tipos=db.execute(f"""SELECT a.tipo, COUNT(*) n FROM audiencias a
+                 WHERE {de_ti} AND a.tipo IS NOT NULL
+                 GROUP BY a.tipo ORDER BY n DESC""", arg_ti).fetchall(),
         equipe_l=db.execute("SELECT id, nome FROM pessoas WHERE ativo=true ORDER BY nome").fetchall(),
-        sem_preparacao=db.execute("SELECT COUNT(*) FROM v_audiencias_sem_preparacao").fetchone()[0],
+        # "sem nenhum item do checklist" DENTRO do recorte, e só o que ainda vai
+        # acontecer. A view `v_audiencias_sem_preparacao` não tem piso de data:
+        # ela devolve as 2.649 audiências com data no passado que a migração
+        # gravou como DESIGNADA, e contá-las aqui punha 2.670 numa tela onde a
+        # fila era de 1.206. Audiência que já passou não se prepara.
+        sem_preparacao=db.execute(f"""SELECT COUNT(*) FROM audiencias a
+                 WHERE {filtro} AND a.id IN (SELECT id FROM v_audiencias_sem_preparacao)
+                   AND substr(a.data_hora,1,10)::date
+                       >= (now() AT TIME ZONE 'America/Sao_Paulo')::date""",
+                                  args).fetchone()[0],
     )
     db.close()
     return pagina(req, "audiencias.html", **ctx)
@@ -843,9 +1060,10 @@ async def audiencia_checklist(req: Request):
                 fluxo.mover(db, "audiencias", aid, "EM_PREPARACAO", _eu(db, u), u["papel"],
                             {"motivo": f"primeiro item da preparação: {CHECKLIST[item]}"})
         db.commit()
-    except (ValueError, banco.Integridade, banco.Operacional) as e:
-        erro = str(e).splitlines()[0]
-    db.close()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
     return _volta(req, f"/audiencias/{aid}", ok="preparação atualizada", erro=erro)
 
 
@@ -908,14 +1126,20 @@ async def prazo_responsavel(req: Request):
     zid = int(req.path_params["id"])
     f = await req.form()
     db = conectar()
-    quem = f.get("pessoa_id")
-    if quem == "eu":
-        quem = _eu(db, u)
-    db.execute("UPDATE prazos SET responsavel_id=? WHERE id=?",
-               (int(quem) if quem else None, zid))
-    db.commit()
-    db.close()
-    return _volta(req, f.get("voltar") or "/prazos", ok="responsável do prazo alterado")
+    erro = None
+    try:
+        quem = f.get("pessoa_id")
+        if quem == "eu":
+            quem = _eu(db, u)
+        db.execute("UPDATE prazos SET responsavel_id=? WHERE id=?",
+                   (int(quem) if quem else None, zid))
+        db.commit()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
+    return _volta(req, f.get("voltar") or "/prazos", ok="responsável do prazo alterado",
+                  erro=erro)
 
 
 # =========================================================== empresas
@@ -1120,8 +1344,8 @@ async def conferencia_resolver(req: Request):
     db = conectar()
     erro = None
     acao = f.get("acao")
-    eu = _eu(db, u)
     try:
+        eu = _eu(db, u)
         if acao == "dono":
             quem = f.get("pessoa_id")
             if quem == "eu":
@@ -1151,9 +1375,10 @@ async def conferencia_resolver(req: Request):
                                 resolvido_em=datetime('now'), resolvido_por=? WHERE id=?""",
                            (texto, eu, cid))
         db.commit()
-    except (banco.Integridade, banco.Operacional) as e:
-        erro = str(e).splitlines()[0]
-    db.close()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
     return _volta(req, "/conferencias" + _qs(req), ok="conferência atualizada", erro=erro)
 
 
@@ -1230,9 +1455,10 @@ async def tarefa_status(req: Request):
         elif novo in ("ABERTA", "EM_ANDAMENTO", "CANCELADA"):
             db.execute("UPDATE tarefas SET status=?, concluida_em=NULL WHERE id=?", (novo, tid))
         db.commit()
-    except (banco.Integridade, banco.Operacional) as e:
-        erro = str(e).splitlines()[0]
-    db.close()
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
     return _volta(req, f.get("voltar") or "/tarefas", ok="tarefa atualizada", erro=erro)
 
 
@@ -1358,12 +1584,15 @@ async def mover(req: Request):
         fluxo.mover(db, entidade, rid, f.get("para"), _eu(db, u), u["papel"], dados)
     except ValueError as e:
         erro = str(e)
-    except (banco.Integridade, banco.Operacional) as e:
+    except banco.ErroBanco as e:
         # a recusa do gatilho vira recado na tela, não 500. A mensagem do
         # PL/pgSQL já é escrita para gente ler — só se tira o cabeçalho técnico.
-        erro = str(e).splitlines()[0].replace("ERROR:  ", "")
-        db.rollback()
-    db.close()
+        erro = _recado(e)
+    finally:
+        # `close()` da Ponte dá rollback e DEVOLVE a conexão ao poço. Fora do
+        # finally, a exceção pulava esta linha e a conexão nunca voltava: com
+        # `max_size=6`, seis recusas paravam o portal inteiro (PoolTimeout).
+        db.close()
     return _volta(req, destino, ok="etapa alterada e registrada no histórico", erro=erro)
 
 
@@ -1385,6 +1614,7 @@ rotas = [
     Route("/processos", processos),
     Route("/processos/{id:int}", processo),
     Route("/processos/{id:int}/anotacao", processo_anotacao, methods=["POST"]),
+    Route("/processos/{id:int}/repasse", processo_repasse, methods=["POST"]),
 
     Route("/audiencias", audiencias),
     Route("/audiencias/{id:int}", audiencia),
@@ -1418,9 +1648,39 @@ rotas = [
 #  Starlette aplica de fora para dentro, então a sessão já está montada em
 #  `scope["session"]` quando a trava roda — e é de lá que sai o token.
 #  Invertido, a trava veria sessão nenhuma e recusaria todo POST do sistema.
+def _segredo():
+    """O segredo que assina o cookie de sessão. Sem ele o portal NÃO sobe.
+
+    Já houve aqui um valor fixo de reserva (`"trocar-em-producao"`), e reserva
+    é o problema: quem esquece a variável não vê erro nenhum, sobe, e passa a
+    assinar sessão com um segredo que está escrito no repositório — uma sessão
+    forjada em qualquer cópia do código valeria nesta instalação, e o portal
+    todo se apoia no cookie para saber quem é quem e qual é o papel.
+
+    Recusar subir é barulhento de propósito: o modo de falha de segurança é o
+    silêncio, e um portal que não sobe é problema de cinco segundos; um portal
+    que sobe com o segredo de teste é problema de ninguém perceber.
+    """
+    import sys
+    s = (os.environ.get("GGV_SEGREDO") or "").strip()
+    if not s:
+        sys.exit(
+            "✗ GGV_SEGREDO não definido — o portal não sobe sem ele.\n"
+            "  É o segredo que assina o cookie de sessão. Não há valor de\n"
+            "  reserva: um segredo escrito no repositório valeria em qualquer\n"
+            "  instalação e deixaria forjar sessão.\n"
+            "  Gere um e guarde (Keychain, ou o gestor de segredos do servidor):\n"
+            "      export GGV_SEGREDO=$(python3 -c \"import secrets;"
+            "print(secrets.token_urlsafe(48))\")\n"
+            "  Trocar o segredo derruba as sessões abertas — é só entrar de novo.")
+    if len(s) < 32:
+        sys.exit(f"✗ GGV_SEGREDO tem {len(s)} caracteres; use pelo menos 32 "
+                 "(secrets.token_urlsafe(48)). Segredo curto é segredo adivinhável.")
+    return s
+
+
 app = Starlette(routes=rotas, middleware=[
-    Middleware(SessionMiddleware,
-               secret_key=os.environ.get("GGV_SEGREDO", "trocar-em-producao"),
+    Middleware(SessionMiddleware, secret_key=_segredo(),
                session_cookie="ggvtrab", max_age=8 * 3600),
     Middleware(csrf.Trava),
 ])

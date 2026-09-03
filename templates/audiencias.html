@@ -3,9 +3,12 @@
 
 <div class="cal-topo"><h1>Pauta de audiências</h1></div>
 <p class="sub">{{ total }} audiência(s) neste recorte ·
-  {{ sem_preparacao }} nos próximos 7 dias sem nenhum item do checklist
+  destas, {{ sem_preparacao }} acontecem nos próximos 7 dias sem nenhum item do checklist
   {{ info('Confirmar testemunha leva tempo: ela comparece sem intimação (CLT art. 825) e, se
-           falhar, é preciso pedir a intimação com antecedência. Por isso a janela é de 7 dias.') }}</p>
+           falhar, é preciso pedir a intimação com antecedência. Por isso a janela é de 7 dias.
+           O número conta dentro deste recorte e só o que ainda vai acontecer: audiência com
+           data no passado não se prepara, e a migração gravou muita audiência antiga como
+           designada.') }}</p>
 
 <form method="get" class="filtros">
   <select name="janela">

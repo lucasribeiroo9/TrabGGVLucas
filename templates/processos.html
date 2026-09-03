@@ -31,10 +31,13 @@
     class="chip {{ 'on' if p.get('fase')==f.codigo }}">{{ f.nome }} · {{ f.registros }}</a>{% endfor %}
 </div>
 <div class="filtros">
-  <span class="sub">qualidade do cadastro:</span>
-  <a href="/processos?falta=empresa" class="chip {{ 'on' if p.get('falta')=='empresa' }}">sem reclamada · {{ qualidade.sem_empresa }}</a>
-  <a href="/processos?falta=numero" class="chip {{ 'on' if p.get('falta')=='numero' }}">sem número · {{ qualidade.sem_numero }}</a>
-  <a href="/processos?falta=valor" class="chip {{ 'on' if p.get('falta')=='valor' }}">sem valor · {{ qualidade.sem_valor }}</a>
+  {# O número do chip conta dentro do recorte, então o link tem de MANTER o
+     recorte: com `/processos?falta=…` fixo, clicar em "sem reclamada · 0"
+     dentro de uma fase largava o filtro e entregava outra fila. #}
+  <span class="sub">qualidade do cadastro, neste recorte:</span>
+  <a href="/processos{{ qs(request, falta='empresa') }}" class="chip {{ 'on' if p.get('falta')=='empresa' }}">sem reclamada · {{ qualidade.sem_empresa }}</a>
+  <a href="/processos{{ qs(request, falta='numero') }}" class="chip {{ 'on' if p.get('falta')=='numero' }}">sem número · {{ qualidade.sem_numero }}</a>
+  <a href="/processos{{ qs(request, falta='valor') }}" class="chip {{ 'on' if p.get('falta')=='valor' }}">sem valor · {{ qualidade.sem_valor }}</a>
   {% for x in execucoes %}<a href="/processos{{ qs(request, situacao_execucao=x.s) }}"
     class="chip {{ 'on' if p.get('situacao_execucao')==x.s }}">{{ x.s|rotulo }} · {{ x.n }}</a>{% endfor %}
 </div>

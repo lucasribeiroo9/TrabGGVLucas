@@ -89,6 +89,21 @@ def _erros():
 
 Integridade, Operacional = _erros()
 
+# As duas famílias de uma vez, para quem trata a RECUSA do banco sem precisar
+# saber de qual delas ela veio.
+#
+# Existe porque `except (banco.Integridade, banco.Operacional)` NÃO funciona:
+# os dois nomes já são tuplas, e Python não aceita tupla aninhada no `except` —
+# levanta `TypeError: catching classes that do not inherit from BaseException
+# is not allowed` em vez de pegar o erro. Escrito assim, o tratamento some sem
+# avisar e toda recusa do gatilho vira 500. Foi o defeito mais grave da
+# auditoria de 03/09/2026 (verificação 7): as conexões não voltavam ao poço e
+# seis recusas seguidas paravam o portal para todo mundo (`PoolTimeout`).
+#
+#     except banco.ErroBanco as e:                           # certo
+#     except (banco.Integridade, banco.Operacional) as e:    # TypeError
+ErroBanco = Integridade + Operacional
+
 
 # ------------------------------------------------------------ a tradução
 def _relogio(m):

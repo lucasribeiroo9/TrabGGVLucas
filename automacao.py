@@ -183,12 +183,28 @@ def _prescricao(db, seco, feitos):
 
 
 def _audiencias(db, seco, feitos):
+    """Só a FILA VIVA: audiência que ainda vai acontecer.
+
+    `v_audiencias_sem_preparacao` não tem piso de data — devolve também as
+    2.649 audiências com data no passado que a migração gravou como DESIGNADA
+    (a origem não dizia o resultado e a carga não inventou um). Sem o piso, a
+    primeira rodada desta regra abriria **2.670 tarefas de uma vez**, e as
+    poucas audiências que acontecem nesta semana — a fila de trabalho de
+    verdade — sumiriam dentro do passivo. Automação que despeja o histórico no
+    colo de alguém não é ajuda: é a lista que ninguém volta a abrir.
+
+    É o mesmo princípio da `DISTRIBUIR_FILA` do Prev, que só alcança o que
+    nasce depois de a regra ser ligada. Regra nova trabalha para a frente; o
+    passivo é decisão de gestão, e se resolve caso a caso na fila de
+    `/audiencias?janela=todas`, não por 2.670 tarefas abertas de madrugada.
+    """
     codigo = "AUDIENCIA_PREPARAR"
     for r in db.execute("""SELECT v.id, v.processo_id, v.data_hora, v.dias_para_audiencia dias,
                                   a.responsavel_id, p.cliente_id
                            FROM v_audiencias_sem_preparacao v
                            JOIN audiencias a ON a.id = v.id
-                           JOIN processos p ON p.id = v.processo_id""").fetchall():
+                           JOIN processos p ON p.id = v.processo_id
+                           WHERE v.dias_para_audiencia >= 0""").fetchall():
         chave = f"audiencia:{r['id']}"
         detalhe = (f"audiência em {r['dias']} dia(s) ({(r['data_hora'] or '')[:16]}) e nenhum "
                    f"item do checklist feito")
@@ -292,15 +308,38 @@ PASSOS = [("PRESCRICAO_BIENAL", _prescricao), ("AUDIENCIA_PREPARAR", _audiencias
 
 
 def rodar(db, seco=False):
-    """Roda as regras ativas. Devolve a lista de (regra, chave) do que fez."""
+    """Roda as regras ativas. Devolve a lista de (regra, chave) do que fez.
+
+    **A RODADA deixa rastro, mesmo sem fazer nada.** `_uma_vez` grava uma linha
+    por AÇÃO; uma rodada em que nenhuma regra teve o que fazer não gravava
+    linha nenhuma, e aí "rodou e não havia nada" e "não rodou" ficam idênticos
+    no banco — o silêncio que a regra 6 da casa proíbe, e o modo de falha que
+    `execucao.py` existe para vigiar. Na segunda-feira o prazo já correu dois
+    dias e ninguém soube.
+
+    `execucao.registrar` grava OK com a contagem, SEM_ACAO quando a rodada foi
+    vazia e ERRO com a mensagem se estourar (e deixa a exceção subir). É o
+    `resultado` dessa linha que distingue os três casos.
+    """
+    import execucao                        # tardio: execucao importa banco, e só
     garantir(db)
     feitos = []
-    for codigo, passo in PASSOS:
-        if not ativa(db, codigo):
-            continue
-        passo(db, seco, feitos)
-    if not seco:
+    if seco:                               # modo seco não escreve, nem o rastro
+        for codigo, passo in PASSOS:
+            if ativa(db, codigo):
+                passo(db, seco, feitos)
+        return feitos
+    with execucao.registrar("AUTOMACAO_RODADA", db=db) as e:
+        ligadas = []
+        for codigo, passo in PASSOS:
+            if not ativa(db, codigo):
+                continue
+            ligadas.append(codigo)
+            passo(db, seco, feitos)
         db.commit()
+        e.itens = len(feitos)
+        e.detalhe = (f"{len(ligadas)} regra(s) ligada(s): {', '.join(ligadas) or 'nenhuma'}"
+                     if ligadas else "nenhuma regra ligada")
     return feitos
 
 

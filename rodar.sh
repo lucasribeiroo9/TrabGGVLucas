@@ -20,10 +20,28 @@ else
   echo "banco: o que chaves.py achar em GGV_SUPABASE_TRAB ou no Keychain (supabase-trab)"
 fi
 
-# O segredo do cookie de sessão. Sem ele o Starlette usaria o valor de
-# desenvolvimento e uma sessão assinada aqui valeria em qualquer instalação.
+# O segredo que assina o cookie de sessão. NÃO há valor de reserva: `app.py`
+# recusa subir sem ele, de propósito. Segredo fixo escrito no repositório
+# valeria em toda instalação e deixaria forjar sessão — e é do cookie que o
+# portal tira quem é quem e qual é o papel. Aqui se para antes, para o recado
+# aparecer no terminal em vez de no fim do servidor.log.
 if [ -z "${GGV_SEGREDO:-}" ]; then
-  echo "aviso: GGV_SEGREDO não definido — a sessão está assinada com a chave de teste."
+  cat <<'FIM'
+✗ GGV_SEGREDO não definido — o portal não sobe sem ele.
+
+  Gere um (48 bytes, base64 url-safe):
+
+      export GGV_SEGREDO=$(python3 -c "import secrets;print(secrets.token_urlsafe(48))")
+      ./rodar.sh
+
+  Para não gerar um novo a cada vez, guarde no Keychain do Mac (ou no gestor de
+  segredos do servidor). Trocar o segredo derruba as sessões abertas — quem
+  estava dentro só precisa entrar de novo:
+
+      security add-generic-password -a "$USER" -s ggv-trab-segredo -w "$GGV_SEGREDO" -U
+      export GGV_SEGREDO=$(security find-generic-password -a "$USER" -s ggv-trab-segredo -w)
+FIM
+  exit 1
 fi
 
 PY=./.venv/bin/python

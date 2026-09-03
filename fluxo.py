@@ -84,7 +84,11 @@ MOTIVO_COLUNA = {
 DOC_NOME = {"CNH_RG": "RG ou CNH", "CTPS": "CTPS", "TRCT": "TRCT",
             "DOCS_MEDICOS": "documentos médicos", "PROVAS": "provas",
             "FGTS": "extrato do FGTS", "HOLERITES": "holerites", "PIS": "PIS",
-            "OUTRO": "outro documento"}
+            "CONTRATO": "contrato de honorários assinado", "OUTRO": "outro documento"}
+
+# O setor que responde pela aprovação da inicial (resposta 8 do Lucas). É o
+# mesmo texto de `pessoas.setor` e de `equipe.SETORES`.
+SETOR_PETICAO_INICIAL = "Petição Inicial"
 
 
 def _um(db, sql, args=()):
@@ -132,9 +136,24 @@ def pendencias_abertas(db, cliente_id=None, processo_id=None):
                       (cliente_id or processo_id,)).fetchall()
 
 
-def _gate(db, exige, entidade, rid, dados, para=None):
-    """Devolve (liberado, explicação). `dados` é o que veio do formulário."""
+def _gate(db, exige, entidade, rid, dados, para=None, pessoa_id=None):
+    """Devolve (liberado, explicação). `dados` é o que veio do formulário;
+    `pessoa_id` é quem está agindo — só o gate de setor olha para ele."""
     d = dados or {}
+
+    # -------- quem está agindo
+    if exige == "setor_peticao_inicial":
+        # Resposta 8: quem aprova a inicial é a equipe de Petição Inicial. Não é
+        # hierarquia de papel — é pertencer ao setor. A mesma pergunta que a
+        # função pessoa_no_setor() responde no banco.
+        if not pessoa_id:
+            return False, ("a aprovação é da equipe de Petição Inicial, e esta conta não está "
+                           "ligada a uma pessoa do escritório")
+        setor = _um(db, "SELECT setor FROM pessoas WHERE id=? AND ativo = true", (pessoa_id,))
+        if setor == SETOR_PETICAO_INICIAL:
+            return True, None
+        return False, ("esta ação é da equipe de Petição Inicial (resposta 8 do Lucas); "
+                       f"seu setor é {setor or 'não cadastrado — ver equipe.py'}")
 
     # -------- os que se resolvem na janela
     if exige == "motivo":
@@ -325,6 +344,11 @@ def caminho(db, exige, entidade, rid):
                     extra="Data, entrevistador e resumo — é o que a inicial vai usar.")
     if exige == "minuta_anexada":
         return dict(texto="Anexar a minuta da inicial nesta ficha", link=None, extra=None)
+    if exige == "setor_peticao_inicial":
+        return dict(texto="Pedir a alguém da equipe de Petição Inicial que aprove ou devolva",
+                    link="/equipe",
+                    extra="O setor de cada pessoa é o de pessoas.setor (equipe.py, pergunta 30). "
+                          "Sem setor cadastrado ninguém aprova.")
     if exige == "prescricao_viva":
         return dict(texto="Registrar a dispensa justificada na ficha do cliente",
                     link=None,
@@ -389,8 +413,12 @@ def percorridas(db, entidade, rid):
            WHERE entidade=? AND entidade_id=?""", (entidade, rid))}
 
 
-def transicoes(db, entidade, rid, papel="ADVOGADO", dados=None):
-    """Todas as saídas possíveis da etapa atual, já com veredito de cada gate."""
+def transicoes(db, entidade, rid, papel="ADVOGADO", dados=None, pessoa_id=None):
+    """Todas as saídas possíveis da etapa atual, já com veredito de cada gate.
+
+    `pessoa_id` é quem está olhando: sem ele o gate de setor (aprovação da
+    inicial) aparece travado, com o motivo dito — a tela deve passar a pessoa
+    da sessão, como `mover()` já faz."""
     fluxo, coluna = FLUXO_DE[entidade]
     atual = etapa_atual(db, entidade, rid)
     if not atual:
@@ -410,7 +438,7 @@ def transicoes(db, entidade, rid, papel="ADVOGADO", dados=None):
 
         falhas, caminhos, quais, campos = [], [], [], []
         for cada in [e.strip() for e in (exige or "").split(",") if e.strip()]:
-            ok1, porque1 = _gate(db, cada, entidade, rid, dados, para)
+            ok1, porque1 = _gate(db, cada, entidade, rid, dados, para, pessoa_id)
             if cada in CAMPOS_NA_JANELA:
                 for c in CAMPOS_NA_JANELA[cada]:
                     if c[0] not in [x["nome"] for x in campos]:
@@ -452,7 +480,7 @@ def mover(db, entidade, rid, para, pessoa_id=None, papel="ADVOGADO", dados=None)
     """
     fluxo, coluna = FLUXO_DE[entidade]
     d = dados or {}
-    op = [t for t in transicoes(db, entidade, rid, papel, d) if t["para"] == para]
+    op = [t for t in transicoes(db, entidade, rid, papel, d, pessoa_id) if t["para"] == para]
     if not op:
         raise ValueError(f"não existe caminho da etapa atual para {para}")
     t = op[0]

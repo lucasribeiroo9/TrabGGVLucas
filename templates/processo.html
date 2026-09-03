@@ -190,7 +190,27 @@
   </table>{% endif %}
   <p class="sub">O lançamento do repasse é do financeiro (decisão do Lucas). Aqui fica só a
     referência — houve, quando, quanto — para o sistema poder dizer que o processo terminou
-    de verdade.</p>
+    de verdade. É esta referência que a fase <b>recebendo → encerrado</b> exige.</p>
+
+  {# Sem este formulário o gate `repasse_registrado` existia sem porta: o
+     processo em RECEBENDO não podia ser encerrado por ninguém pelo portal.
+     O token de CSRF é injetado pela trava, em todo formulário do sistema. #}
+  <form method="post" action="/processos/{{ p.id }}/repasse" class="linha-acoes" style="margin-top:12px">
+    <b>Registrar a referência do repasse</b>
+    <label>valor repassado
+      <input name="valor" inputmode="decimal" placeholder="1.234,56"></label>
+    <label>data do repasse <input type="date" name="data"></label>
+    <label>entregue ao financeiro em
+      <input type="date" name="entregue_ao_financeiro_em" required></label>
+    <label>não havia o que repassar, porque
+      <input name="sem_valor_motivo" placeholder="deixe em branco se houve valor"></label>
+    <label>observação <input name="observacao"></label>
+    <button type="submit">gravar referência</button>
+    <span class="sub">Não movimenta dinheiro: registra que o financeiro recebeu a
+      instrução. Valor <i>ou</i> motivo — um dos dois é obrigatório, e a data da
+      entrega ao financeiro também. O comprovante entra pelos documentos do
+      processo. [CONFIRMAR: se o comprovante deve ser exigido aqui.]</span>
+  </form>
 </details>
 
 <details class="cartao" {{ 'open' if pendencias }}>

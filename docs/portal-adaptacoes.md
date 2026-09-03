@@ -114,6 +114,129 @@ tarefa com dono e prazo. Nenhuma protocola nem move etapa.
 ### `equipe.py`
 `AJUSTES` e `CHEFIA` estão **vazios de propósito** — ver a pendência 1 abaixo.
 
+## Correções depois da auditoria (03/09/2026)
+
+O Auditor cruzou as fases 3 e 4 (`docs/auditoria-fase-3-4.md`). O que era do
+portal foi corrigido nesta rodada; a prova está em `docs/portal-prova.md`.
+
+### `banco.py` — `ErroBanco`, a tupla plana
+
+O Prev escreve `except (ValueError, banco.Integridade)` ou
+`except banco.Operacional` — **nunca as duas tuplas juntas**. Aqui cinco rotas
+escreveram `except (banco.Integridade, banco.Operacional)`, e isso não é um
+`except` mais abrangente: é um `TypeError`. Os dois nomes já são tuplas, Python
+não aceita tupla aninhada ali, e o resultado é o tratamento sumir sem avisar —
+toda recusa do gatilho virando 500, que é exatamente o que o cabeçalho do
+`app.py` promete que não acontece.
+
+`banco.ErroBanco = Integridade + Operacional` é a tupla plana, com o comentário
+do porquê logo acima dela. Onde o `ValueError` também precisa ser pego, a forma
+é `except (ValueError,) + banco.ErroBanco` — soma de tuplas, nunca aninhamento.
+
+**Consequência dois, e a mais cara:** `db.close()` estava fora de `finally`. Com
+a exceção, a conexão nunca voltava ao poço (`max_size=6`), e seis recusas
+paravam o portal para todo mundo com `PoolTimeout`. Agora toda rota de escrita
+fecha em `finally` — `Ponte.close()` dá rollback e devolve ao poço, então uma
+linha só resolve as duas coisas.
+
+### `app.py` — `_recado()`, a recusa em português
+
+Duas fontes de recusa, dois tratamentos. A **governança** fala por `RAISE` do
+PL/pgSQL e já escreve para gente ler; dela só se tira o cabeçalho. O **esquema**
+(CHECK, FK, UNIQUE, NOT NULL) fala em inglês e cita o nome do constraint —
+correto e inútil na tela. `_recado()` traduz por SQLSTATE e guarda o nome do
+constraint entre parênteses, para quem for investigar depois.
+
+E passa **só a primeira linha** do erro, sempre. As linhas de `DETAIL` do
+Postgres trazem o registro inteiro (`Failing row contains …`: nome, CPF,
+telefone) e iriam para a barra de endereço do navegador e para o
+`servidor.log`. Erro não é lugar de vazar cadastro.
+
+### `app.py` — `Recorte`, o filtro montado por dimensão
+
+A regra da casa diz que todo contador conta dentro do recorte ativo. O chip é o
+caso difícil: em `/processos?fase=RECURSAL`, "sem reclamada · 11" contava o
+escritório inteiro enquanto a fila embaixo tinha 0 — contador global em tela
+filtrada não é imprecisão, é oferecer trabalho que não existe.
+
+`Recorte` guarda o filtro como lista de `(dimensão, sql, args)`, e
+`onde(exceto=…)` devolve o WHERE sem uma delas. É isso que deixa cada chip
+contar o recorte **menos a sua própria dimensão** — os três chips de qualidade
+são alternativas entre si, e contá-los já com `falta=numero` aplicado daria a
+interseção. Os chips de fase e de situação da execução seguiram o mesmo
+caminho, com `LEFT JOIN`/subconsulta para a etapa com 0 continuar listada: sem
+isso não haveria como navegar para fora do filtro atual.
+
+O link do chip mudou junto — era `/processos?falta=empresa` fixo, que largava o
+recorte. Número dentro do recorte com link que sai dele seria trocar um engano
+por outro.
+
+### `app.py` — `_segredo()`: sem `GGV_SEGREDO`, o portal não sobe
+
+Havia `os.environ.get("GGV_SEGREDO", "trocar-em-producao")`. Reserva é o
+problema: quem esquece a variável não vê erro nenhum, sobe, e passa a assinar
+sessão com um segredo escrito no repositório — uma sessão forjada em qualquer
+cópia do código valeria nesta instalação, e o portal inteiro se apoia no cookie
+para saber quem é quem e qual é o papel.
+
+Agora recusa subir, com o comando para gerar um. A recusa está no `app.py` e
+não só no `rodar.sh` porque quem sobe por launchd, systemd ou `uvicorn` na mão
+não passa pelo script. Segredo com menos de 32 caracteres também é recusado.
+Barulhento de propósito: portal que não sobe é problema de cinco segundos;
+portal que sobe com o segredo de teste é problema de ninguém perceber.
+
+### `app.py` — `POST /processos/{id}/repasse`
+
+O gate `repasse_registrado` existia sem porta: o único processo em RECEBENDO
+não podia ser encerrado por ninguém pelo portal. A rota registra a
+**referência** — houve, quando, quanto (ou por que não havia) e a data de
+entrega ao financeiro —, não o repasse: resposta 26 do Lucas, quem paga é o
+financeiro. Por isso a tela pede "entregue ao financeiro em" e não tem botão
+"repassar".
+
+Permissão no servidor por `exige(req, "processos")`, a mesma da transição que a
+referência destrava (que em `fluxo_transicoes` não exige papel — herdar a
+exigência da tabela em vez de inventar uma). CSRF pela trava, como todo
+formulário. O `INSERT` deixa linha na `auditoria`: dinheiro tem dono, ainda que
+aqui seja só a referência dele.
+
+`_para_centavos()` aceita "1.234,56" e "1234.56" e **levanta** no que não é
+dinheiro. Vazio devolve `None`; o que não dá para ler PARA o pedido em vez de
+virar zero — zero é um valor, e "repassei R$ 0,00" é afirmação diferente de
+"não consegui ler o que você digitou".
+
+### `automacao.py` — fila viva e rastro de rodada vazia
+
+`AUDIENCIA_PREPARAR` ganhou `WHERE v.dias_para_audiencia >= 0`. A view
+`v_audiencias_sem_preparacao` não tem piso de data e devolve as 2.649
+audiências passadas que a migração gravou como DESIGNADA: a primeira rodada
+abriria 2.670 tarefas de uma vez (agora são 21), e a fila de verdade sumiria
+dentro do passivo. É o princípio da `DISTRIBUIR_FILA` do Prev — regra nova
+trabalha para a frente; o passivo é decisão de gestão, resolvida caso a caso
+em `/audiencias?janela=todas`.
+
+A correção é na REGRA e não na view: `governanca.sql` é do arquiteto, e a view
+serve também à tela, onde ver o passivo tem uso. Quem conta o passivo escolhe
+contá-lo; quem abre tarefa, não.
+
+`rodar()` passou a correr dentro de `execucao.registrar("AUTOMACAO_RODADA")` —
+`OK` com a contagem, `SEM_ACAO` na rodada vazia, `ERRO` com a mensagem. Sem
+essa linha, uma automação que parou de rodar e um dia sem trabalho são a mesma
+coisa vista do banco, que é o modo de falha que a regra 6 da casa proíbe.
+`--seco` continua sem escrever nada, nem o rastro.
+
+### `app.py` — `pendencia_nova` não chuta mais o tipo
+
+Assumia `tipo = 'OUTRO'` quando o campo não vinha. É o tipo `DOCUMENTO` que
+trava a etapa (gate `documentos_obrigatorios`), então chutar aqui é decidir por
+alguém se aquela pendência segura o processo ou não. Agora o formulário pede.
+
+### `rodar.sh`
+
+Para antes de subir quando falta `GGV_SEGREDO`, com o comando para gerar um e
+como guardá-lo no Keychain — o recado sai no terminal em vez do fim do
+`servidor.log`. `parar.sh` não mudou: continua matando só a 8771.
+
 ## O que ficou de fora desta rodada, e por quê
 
 - **`agenda_google.py`** está copiado mas não ligado: ele lê
