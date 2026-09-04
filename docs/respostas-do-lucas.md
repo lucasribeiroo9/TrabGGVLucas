@@ -68,3 +68,25 @@ Logo a leitura conservadora da migração está certa: `PENDENCIAS` lista o que 
 de documento tem um sub-estado — **ainda não pedida** ou **pedida, aguardando** — que é atributo
 (`solicitada_em`), não etapa; a pendência só fecha com `recebida_em` ou dispensa justificada. As 551
 fichas entram como pendência aberta, e a tela mostra há quanto tempo cada uma espera resposta.
+
+## 30 · Setores e organograma: **os oito confirmados, e a hierarquia se edita na tela**
+
+> "Na página de equipe, quando a gente abrir a ficha do funcionário, deixa a quem ele responde e
+> o setor dele. Porque aí pode ser editável — pode mudar a hierarquia, a gente melhora o
+> organograma. Captação, atendimento, documentação, petição inicial, jurídico, financeiro,
+> gestão e direção."
+
+Os **oito setores estão fechados** e são os que a governança já usa. Cada etapa do mapa aponta
+para um deles.
+
+O organograma **não mora em planilha nem no código**: mora no banco (`pessoas.setor` e
+`pessoas.supervisor_id`) e se edita na **ficha da pessoa**, em `/equipe`. Hierarquia muda —
+alguém troca de setor, um supervisor sai — e mudar isso não pode exigir um programador.
+Toda alteração deixa rastro em `auditoria`: quem mudou, quando, de que para que.
+
+A planilha que saiu em 03/09/2026 serve só para o **primeiro preenchimento em lote** dos 72;
+depois dela, a fonte é a tela.
+
+**"Onde manda no sistema"** (qual setor responde por qual etapa) segue como está, escrito no mapa
+(`fluxo_etapas.grupo`). Redefinir isso pela tela fica para depois — decisão do Lucas: "por
+enquanto pode seguir dessa forma". [CONFIRMAR mais adiante: tela para remapear etapa → setor.]
