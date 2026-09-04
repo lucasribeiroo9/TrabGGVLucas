@@ -1069,6 +1069,79 @@ CREATE TABLE migracao_execucoes (
 );
 
 -- ---------------------------------------------------------------------
+-- 14b. PUBLICAÇÕES: o que o diário disse, antes de virar trabalho.
+--
+-- No Prev o equivalente é `aasp.py`, e lá a publicação vira log. Aqui não pode
+-- ser só log: no trabalhista é a publicação que FAZ O PRAZO NASCER, e prazo
+-- perdido é o pior dia do escritório. Por isso a linha guarda as duas datas
+-- que a lei separa e que todo mundo confunde:
+--
+--   `disponibilizado_em` — o dia em que o ato saiu no DEJT;
+--   `publicado_em`       — o PRIMEIRO DIA ÚTIL SEGUINTE (Lei 11.419/2006,
+--                          art. 4º, §§ 3º e 4º), de onde o prazo começa a correr.
+--
+-- Daí para a frente a contagem é em DIAS ÚTEIS (CLT art. 775), com o recesso
+-- de 20/12 a 20/01 suspendendo (art. 775-A). Quem faz essa conta é
+-- `prazo_legal.py` — esta tabela só guarda o resultado.
+--
+-- A máquina PROPÕE e não decide: `prazo_tipo_sugerido` e `vencimento_sugerido`
+-- são leitura de máquina, e `prazo_id` só é preenchido quando alguém do
+-- Jurídico leu e mandou criar. É a regra 5 da casa, e é a mesma decisão que o
+-- Lucas tomou no Prev em 23/08/2026 para as decisões do diário: o trabalho só
+-- nasce quando gente lê.
+-- ---------------------------------------------------------------------
+CREATE TABLE publicacoes (
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    -- De onde veio. `fonte_id` é o identificador NA ORIGEM (no DJEN, o id da
+    -- comunicação; na AASP, o hash do bloco do e-mail). Com a fonte, forma a
+    -- chave que impede a mesma publicação de entrar duas vezes — e ela é lida
+    -- de novo o tempo todo, por retry e por janela de datas sobreposta.
+    fonte             TEXT NOT NULL CHECK (fonte IN ('DJEN','AASP','PJE','MANUAL')),
+    fonte_id          TEXT NOT NULL,
+
+    numero_cnj        TEXT,
+    numero_cnj_digitos TEXT GENERATED ALWAYS AS (regexp_replace(COALESCE(numero_cnj,''), '\D', '', 'g')) STORED,
+    tribunal          TEXT,
+    orgao             TEXT,                                 -- vara, turma, gabinete
+    tipo_ato          TEXT,                                 -- Sentença, Despacho, Intimação…
+    disponibilizado_em TEXT NOT NULL,
+    publicado_em      TEXT,
+    texto             TEXT NOT NULL,
+
+    -- O casamento com o processo. `casou_por` diz a FORÇA da ligação: CNJ é
+    -- exato; ALIAS é a outra grafia que a migração guardou; MANUAL é gente.
+    processo_id       BIGINT REFERENCES processos(id) ON DELETE SET NULL,
+    casou_por         TEXT CHECK (casou_por IN ('CNJ','ALIAS','MANUAL')),
+
+    -- A leitura de máquina, que é PROPOSTA. `prazo_tipo_sugerido` aponta para
+    -- prazo_tipos, e a FK é ligada depois: aquela tabela nasce em governanca.sql.
+    prazo_tipo_sugerido TEXT,
+    vencimento_sugerido TEXT,
+    sugestao_motivo   TEXT,                                 -- por que a máquina achou isso
+
+    situacao          TEXT NOT NULL DEFAULT 'NOVA' CHECK (situacao IN (
+                        'NOVA','LIDA','VIROU_PRAZO','SEM_PRAZO','NAO_E_NOSSA')),
+    lida_em           TEXT,
+    lida_por          BIGINT REFERENCES pessoas(id) ON DELETE SET NULL,
+    prazo_id          BIGINT REFERENCES prazos(id) ON DELETE SET NULL,
+    tarefa_id         BIGINT REFERENCES tarefas(id) ON DELETE SET NULL,
+
+    bruto             JSONB,                                -- a comunicação inteira, como veio
+    criado_em         TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD HH24:MI:SS'),
+
+    UNIQUE (fonte, fonte_id)
+);
+
+-- A fila de trabalho: o que chegou e ninguém leu, mais recente primeiro.
+CREATE INDEX ix_publicacoes_novas ON publicacoes(disponibilizado_em DESC) WHERE situacao = 'NOVA';
+CREATE INDEX ix_publicacoes_processo ON publicacoes(processo_id);
+-- O casamento por CNJ é a operação quente da leitura diária.
+CREATE INDEX ix_publicacoes_cnj ON publicacoes(numero_cnj_digitos) WHERE numero_cnj_digitos <> '';
+-- A que não casou com processo nenhum: é a fila de conferência do cadastro.
+CREATE INDEX ix_publicacoes_orfas ON publicacoes(disponibilizado_em DESC) WHERE processo_id IS NULL;
+
+-- ---------------------------------------------------------------------
 -- 15. As FKs que só podem existir agora (referências para frente)
 -- ---------------------------------------------------------------------
 ALTER TABLE clientes        ADD CONSTRAINT fk_cli_contrato   FOREIGN KEY (contrato_assinado_doc_id) REFERENCES documentos(id) ON DELETE SET NULL;

@@ -1695,6 +1695,11 @@ def main():
                         "FOREIGN KEY (pessoa_id) REFERENCES pessoas(id) ON DELETE SET NULL")
             bd.executar("ALTER TABLE prazos ADD CONSTRAINT fk_prazo_tipo "
                         "FOREIGN KEY (tipo) REFERENCES prazo_tipos(codigo)")
+            # o tipo de prazo que a leitura do diário SUGERE sai da mesma lista
+            # fechada do prazo que ela pode virar — senão a proposta ofereceria
+            # um tipo que o `prazos` recusaria na hora de criar
+            bd.executar("ALTER TABLE publicacoes ADD CONSTRAINT fk_pub_prazo_tipo "
+                        "FOREIGN KEY (prazo_tipo_sugerido) REFERENCES prazo_tipos(codigo)")
             # a governança criou cinco tabelas DEPOIS do esquema: RLS de novo,
             # senão o mapa de etapas fica aberto na API pública
             bd.executar("SELECT ligar_rls()")
