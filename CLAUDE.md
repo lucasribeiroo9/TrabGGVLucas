@@ -16,6 +16,11 @@ em nada da Mapech — o previdenciário deles virou o oficial e nosso trabalho l
   `public` vazio. **Não tocar em `prev_2026_09`** nem no esquema `juridico` (extensão `vector`,
   origem a confirmar com o Lucas). Cópia externa (pg_dump) ainda a fazer no Mac. RLS ligada desde
   a primeira migration.
+  **Estado em 04/09/2026** (`docs/supabase-carga.md`): o ESQUEMA está lá inteiro — 40 tabelas,
+  6 views, 216 constraints, 105 índices, RLS nas 40, a governança viva (5 fluxos, 40 etapas, 111
+  transições, 18 tipos de prazo, 17 gatilhos) — conferido hash a hash contra este repositório.
+  **Falta o DADO**: a carga precisa de uma máquina com rede até o Postgres, que a sessão remota
+  não tem (o proxy dela não passa TCP).
 - **Repositório**: este, `lucasribeiroo9/TrabGGVLucas`, separado do Prev.
 - **Governança**: quatro máquinas de estado, como no Prev — cliente (pré-processual), caso,
   processo (conhecimento → recursal → execução) e etapas judiciais (audiência, prazo) — desenhadas a

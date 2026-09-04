@@ -41,6 +41,16 @@ iguais linha a linha. Não se conectou ao Supabase nesta rodada: a carga lá dep
 Lucas tem, e o esquema `public` de lá continua como a rodada anterior deixou (35 tabelas, RLS em
 todas, sem `governanca.sql` aplicada). Rodar lá é o comando do fim deste arquivo.
 
+> **Atualização de 04/09/2026 — o detalhe está em `docs/supabase-carga.md`.** A URI chegou e o
+> ESQUEMA subiu: o `public` do Supabase é hoje, hash a hash, o que este repositório descreve — 40
+> tabelas, 6 views, 216 constraints, 105 índices, RLS nas 40, a governança inteira (5 fluxos, 40
+> etapas, 111 transições, 18 tipos de prazo) e os 17 gatilhos, provados recusando transição fora do
+> mapa. O DADO continua fora: aquela sessão não alcançava nem o Postgres (o proxy de rede não passa
+> TCP) nem o Airtable (sem token). Lá apareceu também o defeito que só a comparação de DEFINIÇÃO
+> acha: três CHECKs tinham ficado na versão da rodada anterior e teriam recusado **2.574 linhas** no
+> meio da carga — 279 conferências `AUDIENCIA_SEM_RESULTADO`, 1.283 pendências `CONTRATO` e 1.012
+> `CADASTRO`. Corrigidos lá; em `esquema.sql` já estavam certos.
+
 ## Como os dados chegaram sem o token do Airtable
 
 O agente Leitor baixou as dez tabelas pelo **conector MCP do Airtable** (somente leitura). O
