@@ -124,6 +124,45 @@ Continua valendo o que o `CLAUDE.md` manda: **a cópia externa (`pg_dump`) do
 `prev_2026_09` antes**. Ela não foi feita aqui — sem TCP não há `pg_dump` — e `--recriar`
 não a dispensa, ainda que só derrube o `public`.
 
+## A primeira conta de direção
+
+O `portal-prova.md` fechava dizendo que **não havia nenhuma conta `DIRECAO` no cadastro**, e que
+enquanto não houvesse, o campo de perfil de acesso ficava só de leitura para todo mundo — de
+propósito, porque promover alguém a sócio não é ato de gestor. A conta agora existe no Supabase:
+
+| | |
+|---|---|
+| pessoa | **Glauco Gimenez Varella**, setor `Direção` |
+| entra com | `glauco@ggvadvocacia.com.br` — o padrão de `criar_para_equipe` (`{primeiro}@{domínio}`) |
+| perfil | `DIRECAO` |
+| senha | provisória, **troca obrigatória na primeira entrada** (`trocar_senha = true`) |
+
+Quem é a direção não foi escolha desta rodada: está em `docs/respostas-do-lucas.md` — *"Apenas
+Glauco é o sócio. Do trabalhista, Rai e Lucas não são sócios."* A senha **não está escrita em
+lugar nenhum do repositório**, como manda a regra da casa: foi entregue uma vez, e o sistema
+obriga a trocá-la antes de deixar abrir qualquer outra tela.
+
+O hash é o do próprio sistema (`auth.cifrar`, scrypt n=16384 r=8 p=1), não uma reimplementação.
+Provado contra o banco de referência, com o **mesmo `senha_hash` que está no Supabase**:
+`auth.autenticar` devolve a sessão com papel `DIRECAO`, setor `Direção` e troca pendente; senha
+errada é recusada; `auth.pode(papel,'DIRECAO')` é verdadeiro; o perfil abre 13 telas.
+
+**Falta a segunda.** A decisão registrada é de **duas** contas de direção — o **Dr. Vitor
+Esteves** responde quando o Glauco está fora, e são duas contas de verdade, não uma direção "de
+plantão": o sistema não sabe quando alguém viajou. O que segura o uso indevido é o rastro.
+
+Duas coisas a saber antes da carga:
+
+1. **A conta sobrevive ao `--recriar`.** `Banco.guardar()` lê as contas antes de derrubar o
+   schema e `restaurar_usuarios()` as devolve com o mesmo id, hash e papel, recasando a pessoa
+   pelo record do Airtable **ou pelo `nome_norm`**. Esta pessoa foi criada à mão e não tem record,
+   então o recasamento vai pelo nome: `GLAUCO GIMENEZ VARELLA`, gerado com o mesmo `normalizar.norm`
+   que a migração usa, para casar com a linha que vier de FUNCIONARIOS.
+2. **O setor NÃO sobrevive.** `migrar.py` recria `pessoas` do Airtable, e com elas o setor e a
+   chefia se perdem — é a pendência que o `portal-prova.md` já registrava. A rede é
+   `equipe_setores.py --exportar` antes da carga e `--aplicar` depois. Sem isso a conta continua
+   `DIRECAO` (o papel está em `usuarios`), mas a ficha da pessoa volta sem setor.
+
 ## O que foi conferido para garantir que nada mais foi tocado
 
 `prev_2026_09` (a cópia do previdenciário, 69 tabelas) e `juridico` (163 tabelas, extensão
