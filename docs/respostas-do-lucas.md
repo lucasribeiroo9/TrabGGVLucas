@@ -90,3 +90,17 @@ depois dela, a fonte é a tela.
 **"Onde manda no sistema"** (qual setor responde por qual etapa) segue como está, escrito no mapa
 (`fluxo_etapas.grupo`). Redefinir isso pela tela fica para depois — decisão do Lucas: "por
 enquanto pode seguir dessa forma". [CONFIRMAR mais adiante: tela para remapear etapa → setor.]
+
+## Quem é sócio no trabalhista: **só o Glauco**
+
+> "Apenas Glauco é o sócio. Do trabalhista, Rai e Lucas não são sócios."
+
+Diferente do previdenciário, onde a Direção tem três. Aqui o perfil **DIRECAO** é de uma pessoa
+só, e é ela quem desfaz o que está encerrado e quem muda o perfil de acesso dos outros.
+
+Consequência prática: a trava que impede a **última** conta de direção de se rebaixar deixa de
+ser detalhe e passa a ser o que segura o sistema — sem ela, um clique deixaria o escritório sem
+ninguém que possa reabrir processo. Já está implementada e provada.
+
+Rai e Lucas não têm conta no trabalhista, e não devem ter perfil de direção aqui.
+[CONFIRMAR: o Glauco quer um segundo gestor com poder de reabrir, para o caso de ele estar fora?]
