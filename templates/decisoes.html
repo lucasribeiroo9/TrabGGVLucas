@@ -1,0 +1,113 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='decisoes' %}
+{% block titulo %}Decisões{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Decisões</h1></div>
+<p class="sub">{{ total }} decisão(ões) neste recorte. É aqui que se mede <b>onde o escritório
+  ganha e onde perde</b> — e sem isso a pergunta "vale a pena esta tese nesta vara?" só tem
+  resposta de memória.</p>
+
+{% if placar and placar.total %}
+<div class="cartao placar">
+  <div class="cal-topo"><b>SENTENÇAS NESTE RECORTE</b>
+    {{ info('O placar conta só o PRIMEIRO GRAU. Em recurso o mesmo "provido" é vitória ou
+       derrota conforme quem recorreu — nós ou a reclamada —, e somar as duas coisas num
+       número só daria um placar que ninguém pode usar. O resultado de cada acórdão aparece
+       na lista, colado a de quem foi o recurso.', 'por que só sentenças') }}</div>
+  <div class="placar-linha">
+    <div class="placar-item ganho"><b>{{ placar.ganhos }}</b><span>procedente, no todo ou em parte</span></div>
+    <div class="placar-item perda"><b>{{ placar.perdas }}</b><span>improcedente</span></div>
+    <div class="placar-item"><b>{{ placar.extintos }}</b><span>extinto sem resolução de mérito</span></div>
+    {% if placar.sem_resultado %}
+    <div class="placar-item alerta"><b>{{ placar.sem_resultado }}</b>
+      <span>sem resultado registrado {{ info('Sentença publicada e ninguém registrou como
+        terminou. Cada uma destas é um caso que não entra na conta de onde ganhamos — e é a
+        fila de trabalho mais barata que existe: a informação já está nos autos.') }}</span></div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<form method="get" class="filtros">
+  <input type="search" name="q" value="{{ p.get('q') or '' }}" placeholder="vara, magistrado ou número">
+  <select name="orgao"><option value="">vara ou turma — qualquer</option>
+    {% for o in orgaos %}<option value="{{ o.orgao }}" {{ 'selected' if p.get('orgao')==o.orgao }}>{{ o.orgao }} ({{ o.n }})</option>{% endfor %}</select>
+  <button type="submit">filtrar</button><a href="/decisoes" class="chip">limpar</a>
+</form>
+<div class="filtros">
+  <a href="/decisoes{{ qs(request, tipo=None) }}" class="chip {{ 'on' if not p.get('tipo') }}">tudo</a>
+  {% for t in tipos %}<a href="/decisoes{{ qs(request, tipo=t.tipo) }}"
+    class="chip {{ 'on' if p.get('tipo')==t.tipo }}">{{ t.tipo|rotulo }} · {{ t.n }}</a>{% endfor %}
+</div>
+<div class="filtros">
+  {% for r in resultados %}<a href="/decisoes{{ qs(request, resultado=r.res) }}"
+    class="chip {{ 'on' if p.get('resultado')==r.res }}">{{ r.res|rotulo }} · {{ r.n }}</a>{% endfor %}
+</div>
+
+{% if por_orgao %}
+<div class="cartao">
+  <div class="cal-topo"><b>ONDE GANHAMOS E ONDE PERDEMOS</b>
+    {{ info('Só varas com duas sentenças ou mais: com uma só, a porcentagem seria 0% ou 100%
+       e não diria nada sobre a vara.', 'por que algumas varas não aparecem') }}</div>
+  <table>
+    <tr><th>vara ou turma</th><th>procedentes</th><th>improcedentes</th><th>sentenças</th><th></th></tr>
+    {% for o in por_orgao %}
+    <tr>
+      <td><a href="/decisoes{{ qs(request, orgao=o.orgao) }}">{{ o.orgao }}</a></td>
+      <td class="ok">{{ o.ganhos }}</td>
+      <td class="{{ 'erro' if o.perdas }}">{{ o.perdas }}</td>
+      <td>{{ o.n }}</td>
+      <td style="width:34%">
+        {# A barra é a proporção do que foi decidido — não do total: sentença sem
+           resultado registrado não pode contar como derrota. #}
+        {% set decididas = o.ganhos + o.perdas %}
+        {% if decididas %}
+        <div class="barra-gp" title="{{ o.ganhos }} de {{ decididas }} decididas">
+          <span class="barra-ganho" style="width:{{ (100 * o.ganhos / decididas)|round|int }}%"></span>
+        </div>
+        <span class="sub">{{ (100 * o.ganhos / decididas)|round|int }}% procedente</span>
+        {% else %}<span class="sub">nenhuma com resultado registrado</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="cartao"><table>
+<tr><th>decisão</th><th>processo</th><th>resultado</th><th>vara / magistrado</th><th>recursos</th></tr>
+{% for d in linhas %}<tr>
+  <td>
+    <span class="marca-etapa">{{ d.tipo|rotulo }}</span>
+    {% if d.grau %}<span class="pill">{{ d.grau }}</span>{% endif %}<br>
+    <span class="sub">{{ d.data or d.publicada_em or 'sem data' }}</span>
+  </td>
+  <td>
+    {% if d.numero_cnj %}<a href="/processos/{{ d.proc_id }}">{{ d.numero_cnj }}</a>
+    {% else %}<a href="/processos/{{ d.proc_id }}">processo {{ d.proc_id }}</a>{% endif %}
+    {% if d.cliente %}<br><span class="sub">{{ d.cliente }}</span>{% endif %}
+    {% if d.reclamada %}<br><span class="sub">× {{ d.reclamada }}</span>{% endif %}
+  </td>
+  <td>
+    {% if d.resultado_objetivo %}
+      <b class="{{ 'ok' if d.resultado_objetivo in ('PROCEDENTE','PARCIALMENTE_PROCEDENTE')
+                  else ('erro' if d.resultado_objetivo == 'IMPROCEDENTE' else '') }}">
+        {{ d.resultado_objetivo|rotulo }}</b>
+      {% if d.tipo == 'ACORDAO' %}
+        {{ info('Em recurso, "provido" só é bom se quem recorreu fomos nós. Confira na coluna
+           de recursos de quem era.', 'leia com quem recorreu') }}
+      {% endif %}
+    {% else %}<span class="sub">a registrar</span>{% endif %}
+    {% if d.nota %}<br><span class="pill">nota {{ d.nota|lower }}</span>{% endif %}
+  </td>
+  <td class="sub">{{ d.orgao or '—' }}{% if d.magistrado %}<br>{{ d.magistrado }}{% endif %}</td>
+  <td class="sub">{{ d.recursos_ligados or '—' }}</td>
+</tr>{% endfor %}
+</table></div>
+
+{% if not linhas %}
+<div class="cartao"><p>Nada neste recorte.
+  <br><span class="sub">A carga do Airtable traz sentenças e acórdãos em `decisoes`; enquanto o
+  banco não recebe os dados reais, esta tela mostra só a amostra.</span></p></div>
+{% endif %}
+
+{% endblock %}

@@ -53,9 +53,7 @@
       <span>Jurídico ▾</span>
       <div class="submenu">
         {% if 'publicacoes' in telas %}<a href="/publicacoes" class="{{ 'on' if pg=='publicacoes' }}">Publicações{% if pubs_novas %} <b class="chip-n">{{ pubs_novas }}</b>{% endif %}</a>{% endif %}
-        {{ futuro('Decisões', 'A tabela `decisoes` já existe e a carga real traz 3.668
-           sentenças e acórdãos. Falta a tela — é a próxima que dá para fazer sem
-           depender de nada de fora.') }}
+        {% if 'decisoes' in telas %}<a href="/decisoes" class="{{ 'on' if pg=='decisoes' }}">Decisões</a>{% endif %}
         {{ futuro('Fontes das publicações', 'Uma linha por execução da leitura do DEJT,
            com o que entrou e o que falhou. O silêncio é o modo de falha do diário:
            rodada que quebrou tem de ser distinguível de dia sem publicação.') }}

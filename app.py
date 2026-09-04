@@ -1982,6 +1982,101 @@ async def mover(req: Request):
     return _volta(req, destino, ok="etapa alterada e registrada no histórico", erro=erro)
 
 
+# =========================================================== decisões
+#
+#  O que o juízo decidiu nos NOSSOS casos. Não é histórico: é a única tela que
+#  responde onde o escritório ganha e onde perde — e sem ela a pergunta "vale a
+#  pena esta tese nesta vara?" só tem resposta de memória.
+#
+#  Em primeiro grau o sinal é direto: procedente é ganho nosso, improcedente é
+#  perda. Em RECURSO não é: "provido" só é bom se quem recorreu fomos nós. Por
+#  isso o resultado do acórdão anda sempre colado a `recursos.de_quem`, e a
+#  tela recusa somar as duas coisas num placar só.
+GANHO = ("PROCEDENTE", "PARCIALMENTE_PROCEDENTE")
+PERDA = ("IMPROCEDENTE",)
+
+
+async def decisoes(req: Request):
+    u, r = exige(req, "decisoes")
+    if r:
+        return r
+    p = req.query_params
+    fl = Filtros(req)
+    db = conectar()
+    try:
+        rec = Recorte()
+        for campo, coluna in (("tipo", "d.tipo"), ("resultado", "d.resultado_objetivo"),
+                              ("grau", "d.grau"), ("nota", "d.nota"), ("orgao", "d.orgao")):
+            v = fl.texto(campo)
+            if v:
+                rec.mais(campo, f"{coluna} = ?", v)
+        busca = fl.texto("q")
+        if busca:
+            rec.mais("q", "(d.magistrado ILIKE ? OR d.orgao ILIKE ? OR pr.numero_cnj ILIKE ?)",
+                     f"%{busca}%", f"%{busca}%", f"%{busca}%")
+        filtro, args = rec.onde()
+
+        linhas = db.execute(f"""
+            SELECT d.*, pr.numero_cnj, pr.fase, pr.id proc_id, c.nome cliente,
+                   e.razao_social reclamada,
+                   (SELECT string_agg(rc.tipo || ' (' || COALESCE(rc.de_quem,'?') || ')', ', ')
+                      FROM recursos rc WHERE rc.decisao_id = d.id) recursos_ligados
+              FROM decisoes d
+              JOIN processos pr ON pr.id = d.processo_id
+              LEFT JOIN clientes c ON c.id = pr.cliente_id
+              LEFT JOIN empresas e ON e.id = pr.empresa_id
+             WHERE {filtro}
+             ORDER BY COALESCE(d.data, d.publicada_em) DESC NULLS LAST, d.id DESC
+             LIMIT 300""", args).fetchall()
+        total = db.execute(f"""SELECT COUNT(*) FROM decisoes d
+                               JOIN processos pr ON pr.id = d.processo_id
+                              WHERE {filtro}""", args).fetchone()[0]
+
+        # O placar conta só o PRIMEIRO GRAU, e o motivo está no comentário lá em
+        # cima: em recurso o mesmo "provido" é vitória ou derrota conforme quem
+        # recorreu. Misturar os dois daria um número que ninguém pode usar.
+        placar = db.execute(f"""
+            SELECT COUNT(*) FILTER (WHERE d.resultado_objetivo IN ('PROCEDENTE','PARCIALMENTE_PROCEDENTE')) ganhos,
+                   COUNT(*) FILTER (WHERE d.resultado_objetivo = 'IMPROCEDENTE') perdas,
+                   COUNT(*) FILTER (WHERE d.resultado_objetivo = 'EXTINTO_SEM_RESOLUCAO') extintos,
+                   COUNT(*) FILTER (WHERE d.resultado_objetivo IS NULL) sem_resultado,
+                   COUNT(*) total
+              FROM decisoes d JOIN processos pr ON pr.id = d.processo_id
+             WHERE {filtro} AND d.tipo = 'SENTENCA'""", args).fetchone()
+
+        de_ti, arg_ti = rec.onde("tipo")
+        de_re, arg_re = rec.onde("resultado")
+        de_or, arg_or = rec.onde("orgao")
+        ctx = dict(
+            linhas=linhas, total=total, p=p, avisos=fl.avisos, pg="decisoes",
+            placar=placar,
+            tipos=db.execute(f"""SELECT d.tipo, COUNT(*) n FROM decisoes d
+                                 JOIN processos pr ON pr.id = d.processo_id
+                                WHERE {de_ti} GROUP BY 1 ORDER BY n DESC""", arg_ti).fetchall(),
+            resultados=db.execute(f"""SELECT d.resultado_objetivo res, COUNT(*) n FROM decisoes d
+                                      JOIN processos pr ON pr.id = d.processo_id
+                                     WHERE {de_re} AND d.resultado_objetivo IS NOT NULL
+                                     GROUP BY 1 ORDER BY n DESC""", arg_re).fetchall(),
+            orgaos=db.execute(f"""SELECT d.orgao, COUNT(*) n FROM decisoes d
+                                  JOIN processos pr ON pr.id = d.processo_id
+                                 WHERE {de_or} AND d.orgao IS NOT NULL
+                                 GROUP BY 1 ORDER BY n DESC LIMIT 20""", arg_or).fetchall(),
+            # Onde ganhamos e onde perdemos, por vara. É a conta que a tela
+            # existe para fazer — e só aparece com sentença suficiente.
+            por_orgao=db.execute(f"""
+                SELECT d.orgao,
+                       COUNT(*) FILTER (WHERE d.resultado_objetivo IN ('PROCEDENTE','PARCIALMENTE_PROCEDENTE')) ganhos,
+                       COUNT(*) FILTER (WHERE d.resultado_objetivo = 'IMPROCEDENTE') perdas,
+                       COUNT(*) n
+                  FROM decisoes d JOIN processos pr ON pr.id = d.processo_id
+                 WHERE {filtro} AND d.tipo='SENTENCA' AND d.orgao IS NOT NULL
+                 GROUP BY 1 HAVING COUNT(*) >= 2 ORDER BY n DESC LIMIT 15""", args).fetchall(),
+        )
+        return pagina(req, "decisoes.html", **ctx)
+    finally:
+        db.close()
+
+
 # =========================================================== aparência
 async def aparencia(req: Request):
     """Tema e corpo da letra, por pessoa.
@@ -2212,6 +2307,7 @@ rotas = [
 
     Route("/publicacoes", publicacoes),
     Route("/publicacao/{id:int}/decidir", publicacao_decidir, methods=["POST"]),
+    Route("/decisoes", decisoes),
     Route("/aparencia", aparencia, methods=["POST"]),
 
     Route("/empresas", empresas),

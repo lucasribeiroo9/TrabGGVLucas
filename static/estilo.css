@@ -1335,3 +1335,16 @@ nav > .futuro{padding:.5em .7em}
 .aparencia button:hover{border-color:var(--acento)}
 .aparencia button.on{background:var(--acento-fraco);border-color:var(--acento);
   color:var(--acento);font-weight:600}
+
+/* ---- decisões: o placar e a barra de ganho/perda ----------------------- */
+.placar .placar-linha{display:flex;flex-wrap:wrap;gap:1.6rem;padding:.3rem 0}
+.placar-item{display:flex;flex-direction:column;gap:.15rem;min-width:9rem}
+.placar-item b{font-size:1.75rem;line-height:1.1;font-variant-numeric:tabular-nums}
+.placar-item span{font-size:0.75rem;color:var(--fraco)}
+.placar-item.ganho b{color:var(--ok)}
+.placar-item.perda b{color:var(--erro)}
+.placar-item.alerta b{color:var(--alerta)}
+/* A barra mede a proporção do que FOI DECIDIDO — sentença sem resultado
+   registrado não conta como derrota. O trilho é o total decidido. */
+.barra-gp{height:8px;border-radius:4px;background:var(--erro-bg);overflow:hidden;margin-bottom:.2em}
+.barra-ganho{display:block;height:100%;background:var(--ok);border-radius:4px}
