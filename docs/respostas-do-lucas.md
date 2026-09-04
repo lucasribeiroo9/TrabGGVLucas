@@ -103,4 +103,11 @@ ser detalhe e passa a ser o que segura o sistema — sem ela, um clique deixaria
 ninguém que possa reabrir processo. Já está implementada e provada.
 
 Rai e Lucas não têm conta no trabalhista, e não devem ter perfil de direção aqui.
-[CONFIRMAR: o Glauco quer um segundo gestor com poder de reabrir, para o caso de ele estar fora?]
+**Respondido**: o **Dr. Vitor Esteves** é a direção quando o Glauco está fora. São duas contas
+DIRECAO, e não uma direção "de plantão": o sistema não sabe quando alguém viajou, e um perfil que
+some sozinho seria pior — quem precisa reabrir um processo às onze da noite não pode depender de
+um calendário estar certo. O que segura o uso indevido é o rastro: reabrir grava quem, quando e
+por quê, e a ficha da pessoa mostra o histórico.
+
+[CONFIRMAR mais adiante: se o escritório quiser delegação com prazo — "o Vitor responde pela
+direção de 10 a 20/09" — isso é uma funcionalidade a construir, não uma conta a mais.]
