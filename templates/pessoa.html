@@ -1,0 +1,220 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='equipe' %}
+{% block titulo %}{{ p.nome }}{% endblock %}{% block corpo %}
+
+{# A ficha da pessoa. Uma coluna, blocos que abrem — o padrão das outras fichas.
+   NADA aqui é regra escrita no template: os setores vêm de `fluxo_etapas.grupo`,
+   os perfis do CHECK de `usuarios.papel`, e o que ela pode mover sai de
+   `fluxo_transicoes`. O template só desenha o que o servidor mandou. #}
+
+<div class="cal-topo">
+  <a href="/equipe" class="sub">← Equipe</a>
+  <h1>{{ p.nome }}</h1>
+  <span class="marca-etapa">{{ 'ativa' if p.ativo else 'inativa' }}</span>
+  {% if p.setor %}<span class="marca-etapa">{{ p.setor }}</span>
+  {% else %}<span class="sinal laranja">sem setor</span>{% endif %}
+</div>
+
+<div class="cartao">
+  <div class="grade-ficha">
+    <div><span class="rot">papéis na origem</span>{{ papeis|join(', ')|lower or '—' }}
+      {{ info('Vêm da coluna FUNCOES do Airtable (tabela FUNCIONARIOS) e são só leitura aqui:
+               quem os edita é a base de origem, que o escritório usa todo dia. Papel da
+               origem NÃO é perfil de acesso nem setor.') }}</div>
+    <div><span class="rot">e-mail de acesso</span>{{ p.email or '—' }}</div>
+    <div><span class="rot">perfil</span>{{ p.papel|lower or 'sem conta' }}</div>
+    <div><span class="rot">conta</span>
+      {% if not p.usuario_id %}<span class="sub">ainda não tem acesso ao sistema</span>
+      {% elif not p.conta_ativa %}<span class="sub">desativada</span>
+      {% elif p.trocar_senha %}<span class="sub">senha provisória, ainda não trocada</span>
+      {% else %}ativa{% endif %}</div>
+    <div><span class="rot">último acesso</span>{{ p.ultimo_acesso[:16] if p.ultimo_acesso else '—' }}</div>
+    <div><span class="rot">entrou no cadastro</span>{{ p.criado_em[:10]|data_br }}
+      {{ info('É quando a pessoa entrou NESTE cadastro — a data da carga do Airtable, para
+               quem veio dela. Não é a data de admissão: a origem não a guarda.') }}</div>
+    <div><span class="rot">teto de "agora"</span>{{ p.limite_agora }} tarefa(s)</div>
+    <div><span class="rot">avisos (ntfy)</span>{{ p.ntfy_topic or '—' }}</div>
+  </div>
+  {% if p.observacao %}<p>{{ p.observacao }}</p>{% endif %}
+</div>
+
+{# ------------------------------------------------------------- organograma #}
+<div class="cartao">
+  <h2>Onde ela fica no organograma</h2>
+  <p class="sub">É aqui que a hierarquia se muda — sem programador, como o Lucas pediu.
+    Toda alteração deixa linha em <code>auditoria</code>: quem mudou, quando, de que para que.</p>
+
+  {% if pode_editar %}
+  <form method="post" action="/equipe/{{ p.id }}/setor" class="linha-acoes" style="margin-top:10px">
+    <label>setor
+      <select name="setor" onchange="this.form.submit()">
+        <option value="">sem setor</option>
+        {% for s in setores %}<option value="{{ s }}" {{ 'selected' if p.setor==s }}>{{ s }}</option>{% endfor %}
+      </select></label>
+    <button class="leve">salvar</button>
+    <span class="sub">os setores são os do mapa de etapas (<a href="/fluxos">Governança</a>);
+      esta lista sai do banco, não do código.</span>
+  </form>
+
+  <form method="post" action="/equipe/{{ p.id }}/chefe" class="linha-acoes" style="margin-top:10px">
+    <label>responde a
+      <select name="supervisor_id" onchange="this.form.submit()">
+        <option value="">ninguém</option>
+        {% for c in chefes %}<option value="{{ c.id }}" {{ 'selected' if p.supervisor_id==c.id }}>
+          {{ c.nome }}{% if c.setor %} · {{ c.setor }}{% endif %}</option>{% endfor %}
+      </select></label>
+    <button class="leve">salvar</button>
+    <span class="sub">a própria pessoa não está na lista, nem quem já responde a ela
+      {% if abaixo_n %}({{ abaixo_n }} pessoa(s) abaixo){% endif %} — oferecer o que o
+      servidor recusaria é ensinar a errar.</span>
+  </form>
+  {% else %}
+  <div class="grade-ficha" style="margin-top:10px">
+    <div><span class="rot">setor</span>{{ p.setor or 'sem setor' }}</div>
+    <div><span class="rot">responde a</span>{{ p.supervisor or '—' }}</div>
+  </div>
+  <p class="sub">Só gestão e direção alteram setor e chefia. Ver não é alterar.</p>
+  {% endif %}
+
+  {% if chefia %}
+  <p class="sub" style="margin-top:10px">Linha de comando acima dela:
+    {% for c in chefia %}{{ c.nome }}{% if c.setor %} <span class="sub">({{ c.setor }})</span>{% endif %}
+    {% if not loop.last %} → {% endif %}{% endfor %}</p>
+  {% endif %}
+</div>
+
+<details class="cartao" {{ 'open' if subordinados }}>
+  <summary><b>Quem responde a ela</b> · {{ subordinados|length }}</summary>
+  <table>
+    <tr><th>pessoa</th><th>setor</th><th class="num">tarefas abertas</th><th>situação</th></tr>
+    {% for d in subordinados %}<tr class="{{ '' if d.ativo else 'fim' }}">
+      <td><a href="/equipe/{{ d.id }}">{{ d.nome }}</a></td>
+      <td>{{ d.setor or '—' }}</td>
+      <td class="num">{{ d.abertas }}</td>
+      <td class="sub">{{ 'ativa' if d.ativo else 'inativa' }}</td></tr>{% endfor %}
+    {% if not subordinados %}<tr><td colspan="4" class="sub">ninguém responde a ela hoje</td></tr>{% endif %}
+  </table>
+</details>
+
+{# --------------------------------------------------------- perfil de acesso #}
+<details class="cartao">
+  <summary><b>Perfil de acesso</b> · {{ p.papel|lower or 'sem conta' }}</summary>
+  <p class="sub">O perfil é o que <code>fluxo_transicoes.papel</code> cobra: é ele que decide
+    quem reabre processo encerrado e quem dá caso por perdido. Por isso só a Direção o troca —
+    é decisão de sócio.</p>
+  <table>
+    {% for nome, texto in descricao_perfis.items() %}<tr>
+      <td>{{ nome|lower }}{% if p.papel==nome %} <b>· é este</b>{% endif %}</td>
+      <td class="sub">{{ texto }}</td></tr>{% endfor %}
+  </table>
+  {% if not p.usuario_id %}
+    <p class="sub">Esta pessoa ainda não tem conta. Abrir acesso é outro ato
+      (<code>python3 auth.py equipe</code>): a senha nasce provisória, aparece UMA vez e
+      não fica escrita em lugar nenhum do repositório.</p>
+  {% elif pode_perfil %}
+    <form method="post" action="/equipe/{{ p.id }}/perfil" class="linha-acoes">
+      <label>perfil
+        <select name="papel">
+          {% for r in perfis %}<option value="{{ r }}" {{ 'selected' if p.papel==r }}>{{ r|lower }}</option>{% endfor %}
+        </select></label>
+      <button>salvar perfil</button>
+    </form>
+  {% else %}
+    <p class="sub">Só a Direção altera o perfil de acesso.</p>
+  {% endif %}
+</details>
+
+{# ------------------------------------------------------------ o que carrega #}
+<div class="cartao">
+  <h2>O que está com ela hoje</h2>
+  <p class="sub">Cada número sai de uma consulta, e nenhum deles se soma aos outros: tarefa é
+    o que ela tem de fazer, processo é onde ela assina, cliente é de quem ela cuida.</p>
+  <div class="grade-ficha">
+    <div><span class="rot">tarefas abertas</span>{{ carga.tarefas_abertas }}
+      {% if carga.tarefas_atrasadas %}<span class="sub">{{ carga.tarefas_atrasadas }} já
+        passaram do prazo</span>{% endif %}</div>
+    <div><span class="rot">processos onde é a advogada</span>{{ carga.processos }}</div>
+    <div><span class="rot">clientes de quem cuida</span>{{ carga.clientes }}</div>
+    <div><span class="rot">audiências por realizar</span>{{ carga.audiencias }}</div>
+    <div><span class="rot">prazos abertos</span>{{ carga.prazos }}</div>
+  </div>
+  <p class="sub" style="margin-top:8px">
+    <a href="/tarefas?quem={{ p.id }}">ver as tarefas</a> ·
+    <a href="/processos?advogado={{ p.id }}">ver os processos</a> ·
+    <a href="/clientes?responsavel={{ p.id }}">ver os clientes</a></p>
+</div>
+
+{# ------------------------------------------------- o que ela pode no sistema #}
+<div class="cartao">
+  <h2>O que ela pode fazer no sistema</h2>
+  <p class="sub">Isto não está escrito aqui: sai de <code>fluxo_transicoes</code> (o papel que
+    cada ação exige) e de <code>fluxo_etapas</code> (o setor que responde por cada etapa).
+    Muda sozinho quando o mapa muda.</p>
+
+  {% if pelo_setor %}
+  <table>
+    <tr><th>ação que depende de SETOR</th><th>setor exigido</th><th>hoje</th></tr>
+    {% for a in pelo_setor %}<tr>
+      <td>{{ a.acao }} <span class="sub">({{ a.de }} → {{ a.para }})</span></td>
+      <td>{{ a.setor_exigido }}</td>
+      <td>{% if a.pode %}<b>pode</b>{% else %}<span class="porque">{{ a.porque }}</span>{% endif %}</td>
+    </tr>{% endfor %}
+  </table>
+  {% endif %}
+
+  <p style="margin-top:10px">Move <b>{{ pode|length }}</b> das {{ (pode|length) + (nao_pode|length) }}
+    transições do mapa.</p>
+
+  <details><summary class="sub">as {{ nao_pode|length }} que ela não move, e por quê</summary>
+    <table>
+      <tr><th>fluxo</th><th>ação</th><th>por quê</th></tr>
+      {% for a in nao_pode %}<tr>
+        <td class="sub">{{ a.fluxo }}</td>
+        <td>{{ a.acao }} <span class="sub">({{ a.de }} → {{ a.para }})</span></td>
+        <td class="porque">{{ a.porque }}</td></tr>{% endfor %}
+      {% if not nao_pode %}<tr><td colspan="3" class="sub">nenhuma — ela move o mapa inteiro</td></tr>{% endif %}
+    </table>
+  </details>
+
+  <details><summary class="sub">as {{ pode|length }} que ela move</summary>
+    <table>
+      <tr><th>fluxo</th><th>ação</th><th>papel exigido</th></tr>
+      {% for a in pode %}<tr>
+        <td class="sub">{{ a.fluxo }}</td>
+        <td>{{ a.acao }} <span class="sub">({{ a.de }} → {{ a.para }})</span></td>
+        <td class="sub">{{ a.papel|lower or 'qualquer' }}</td></tr>{% endfor %}
+    </table>
+  </details>
+</div>
+
+{% if etapas_setor %}
+<details class="cartao">
+  <summary><b>A fila do setor {{ p.setor }}</b> · {{ etapas_setor|length }} etapa(s) do mapa</summary>
+  <p class="sub">As etapas que o mapa põe na mão deste setor, e quantos registros estão
+    paradas nelas agora. É o que muda de trabalho quando alguém troca de setor.</p>
+  <table>
+    <tr><th>fluxo</th><th>etapa</th><th class="num">registros</th><th class="num">SLA (dias)</th></tr>
+    {% for e in etapas_setor %}<tr>
+      <td class="sub">{{ e.fluxo|lower }}</td>
+      <td>{{ e.nome }}</td>
+      <td class="num">{{ e.registros if e.registros is not none else '—' }}</td>
+      <td class="num">{{ e.sla_dias or '—' }}</td></tr>{% endfor %}
+  </table>
+</details>
+{% endif %}
+
+<details class="cartao" {{ 'open' if rastro }}>
+  <summary><b>O que já mudou nesta ficha</b> · {{ rastro|length }}</summary>
+  <p class="sub">De <code>auditoria</code>. Setor e chefia são de <code>pessoas</code>;
+    perfil de acesso é de <code>usuarios</code>.</p>
+  <table>
+    <tr><th>quando</th><th>o quê</th><th>de</th><th>para</th><th>quem mudou</th></tr>
+    {% for a in rastro %}<tr>
+      <td class="mono">{{ a.em[:16] }}</td>
+      <td>{{ a.campo|rotulo }} <span class="sub">({{ a.tabela }})</span></td>
+      <td>{{ a.valor_antigo or '—' }}</td>
+      <td><b>{{ a.valor_novo or '—' }}</b></td>
+      <td>{{ a.quem or '—' }}</td></tr>{% endfor %}
+    {% if not rastro %}<tr><td colspan="5" class="sub">nada mudou aqui ainda</td></tr>{% endif %}
+  </table>
+</details>
+{% endblock %}

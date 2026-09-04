@@ -29,7 +29,9 @@
 | `/testemunhas/{id}` | Em que casos serve, contatos, auditoria do formulário interno | — |
 | `/conferencias` | A fila de divergências, com **os dois valores lado a lado**, o trecho de prova, dono e situação | filtros: tipo, entidade, dono, situação |
 | `/tarefas` | As tarefas, com a carga da equipe | filtros: minhas / sem dono / do escritório, setor, tipo, situação |
-| `/equipe` | Quem é quem, papéis da origem, chefia, carga, quem tem acesso | — |
+| `/equipe` | Quem é quem, **agrupado por setor**, com o bloco de quem ainda está sem setor no topo. Cada nome leva à ficha | contagem por setor e o total do cadastro, tudo de consulta |
+| `/equipe/{id}` **Ficha da pessoa** | Identidade, papéis da origem (só leitura), **setor** e **a quem responde** editáveis, quem responde a ela, a carga, o que ela pode mover no sistema, e o rastro de `auditoria` | — |
+| `/equipe/{id}/{setor\|chefe\|perfil}` | As três escritas do organograma. Setor e chefia: GESTOR ou DIRECAO. Perfil de acesso: só DIRECAO | — |
 | `/fluxos` **Governança** | O mapa como o banco o guarda: etapas, transições, gates, textos de bloqueio, tipos de prazo, automações e o rastro de execução | — |
 | `/painel` | Onde estão os casos, o que passou do SLA, onde se ganha e perde, dinheiro, TRTs, incidentes | — |
 | `/mover/{entidade}/{id}` | **A porta única** por onde a etapa muda, para as cinco máquinas | — |
@@ -81,7 +83,7 @@
 | TESTEMUNHAS: PLANILHA GERAL (+copy) | `/testemunhas` |
 | TESTEMUNHAS: MENSAGENS ENVIADAS | **falta** |
 | AUDITORIA (testemunhas) | dentro da ficha da testemunha |
-| FUNCIONARIOS (3 views) | `/equipe` |
+| FUNCIONARIOS (3 views) | `/equipe` e `/equipe/{id}` |
 | PÓS PROCESSUAL | o bloco **Dinheiro** na ficha do processo (recebimentos, repasse) e o painel. A tabela é quase vazia na origem: o pós-processual está desenhado e não é praticado |
 | Conferência de Faltantes (4 views) | **parcial**: `/conferencias` diz quantos são; a mesa de validação em si falta |
 
@@ -90,7 +92,7 @@
 | Formulário | Onde está agora |
 |---|---|
 | Cadastro de Cliente - Processo Trabalhista | **falta**. É o caminho de entrada do passivo, e ele pede FASE e STATUS obrigatórios com as opções poluídas — reproduzi-lo como está seria reproduzir o problema |
-| Cadastro de Funcionários | **falta** (o cadastro de pessoa é por `equipe.py` e `auth.py equipe`) |
+| Cadastro de Funcionários | **parcial**: setor, chefia e perfil se editam em `/equipe/{id}`; criar pessoa e abrir acesso ainda são `migrar.py` e `auth.py equipe` |
 | Cadastro de Testemunha (jurídico) e COMERCIAL | **faltam**. O comercial tem os rótulos trocados na origem (o campo "etapa processual" é o link para a PRÉ e vice-versa); refazer aqui é a chance de acertar |
 
 ## O que falta, em ordem de quem sente a falta primeiro
@@ -111,3 +113,97 @@
 6. **Gestão por período**: processos por ano, distribuição por mês, conversão
    por captador e por campanha.
 7. **A agenda no Google** — o módulo está copiado e faltam duas colunas.
+
+
+## O organograma: onde ele mora e como se preenche
+
+> Resposta 30 do Lucas (03/09/2026): *"Na página de equipe, quando a gente abrir a
+> ficha do funcionário, deixa a quem ele responde e o setor dele. Porque aí pode
+> ser editável — pode mudar a hierarquia, a gente melhora o organograma."*
+
+O organograma **não mora em planilha nem no código**. Mora no banco
+(`pessoas.setor` e `pessoas.supervisor_id`) e se edita na ficha da pessoa. As
+constantes `AJUSTES` e `CHEFIA` que existiam em `equipe.py` foram removidas:
+organograma escrito em código é organograma que só um programador conserta, que
+é exatamente o que o Lucas pediu para acabar.
+
+**Os oito setores saem do banco**, de `fluxo_etapas.grupo` — Captação,
+Atendimento, Documentação, Petição Inicial, Jurídico, Financeiro, Gestão,
+Direção. A lista não está escrita em template nenhum, nem em `equipe.py`: se um
+dia o mapa de etapas ganhar um setor, o cadastro de pessoa ganha junto. E é a
+mesma coluna que diz qual setor responde por qual etapa, então "setor da pessoa"
+e "setor da etapa" são, de propósito, o mesmo vocabulário — é isso que faz o
+gate `setor_peticao_inicial` poder perguntar por `pessoas.setor`.
+
+**Quem altera o quê, conferido no servidor:**
+
+| Campo | Quem pode | Por quê |
+|---|---|---|
+| setor | GESTOR ou DIRECAO | é remanejamento de trabalho |
+| a quem responde | GESTOR ou DIRECAO | idem |
+| perfil de acesso (`usuarios.papel`) | **só DIRECAO** | mudar quem reabre processo encerrado e quem dá caso por perdido é decisão de sócio |
+
+Ver não é alterar: quem é do **setor** Direção enxerga a tela inteira
+(`auth.telas_de`), e mesmo assim não altera nada se o perfil da conta não
+alcançar — a permissão de escrita sai de `usuarios.papel`, pela hierarquia de
+`auth.pode()`.
+
+Três recusas que não são erro de digitação e por isso têm frase própria:
+
+  · **laço de chefia** (A responde a B, B responde a A — e a volta longa
+    A→B→C→A): a tela nem oferece quem já está abaixo da pessoa, e o servidor
+    recusa de novo, mostrando a volta que se formaria;
+  · **setor que não existe**: conferido contra a lista do banco, não contra o
+    `<select>` — o POST não vem só do `<select>`;
+  · **a última conta com perfil de direção** não sai por aqui: tirá-la deixaria
+    o sistema sem quem reabre processo *e* sem quem devolva o perfil a alguém.
+
+Toda alteração deixa linha em `auditoria` (tabela, registro, campo, valor
+antigo, valor novo, quem, quando) — e o valor guardado do chefe é o **nome**,
+não o id: quem lê a auditoria seis meses depois quer o nome.
+
+### `equipe_setores.py` — o preenchimento em lote dos 72
+
+A planilha que o Lucas está preenchendo serve ao **primeiro** preenchimento.
+Depois dela, a fonte é a tela.
+
+```bash
+./.venv/bin/python equipe_setores.py equipe.csv                              # só confere
+./.venv/bin/python equipe_setores.py equipe.csv --aplicar --quem <e-mail>    # grava
+./.venv/bin/python equipe_setores.py --exportar equipe.csv                   # tira do banco
+```
+
+O formato é o mais simples que resolve — quatro colunas, cabeçalho obrigatório:
+
+```csv
+nome,setor,chefe,perfil
+Glauco Gimenez Varella,Direção,,
+alisson leal,Petição Inicial,Glauco Gimenez Varella,GESTOR
+KAYO,Jurídico,Alisson Leal,
+Larissa Batista,Documentação,Alisson Leal,ADVOGADO
+```
+
+| Coluna | O que aceita |
+|---|---|
+| `nome` | casa por nome normalizado (`pessoas.nome_norm`): acento e caixa não contam. Nome que não casa, ou que casa em duas pessoas, é **recusa** — nunca palpite. Nada de semelhança: ela casa *Marina* com *Marize* |
+| `setor` | um dos oito do banco. Vazio = deixa como está; `-` = tira o setor |
+| `chefe` | outro nome, casado do mesmo jeito. Vazio = deixa como está; `-` = tira a chefia |
+| `perfil` | `ADVOGADO`, `GESTOR` ou `DIRECAO`, e só para quem já tem conta. Vazio = deixa como está |
+
+**Nada é gravado pela metade.** O arquivo inteiro é conferido antes — inclusive
+o laço de chefia que a *soma* das linhas criaria, que nenhuma linha sozinha
+mostra — e uma linha ruim impede a carga toda, com o relatório do que recusou e
+por quê. Meia planilha aplicada é pior que planilha nenhuma: ninguém sabe onde
+parou, e o organograma fica metade novo, metade velho.
+
+Sem `--aplicar` ele só confere e imprime o que faria. Cada alteração passa pelas
+**mesmas funções da tela** (`equipe.mudar_setor`, `mudar_chefe`, `mudar_perfil`),
+para a planilha não virar a porta dos fundos por onde entra o que a tela recusa —
+e deixa a mesma linha de `auditoria`. É idempotente: rodar duas vezes grava zero
+na segunda.
+
+`--exportar` faz o caminho de volta, no mesmo formato. Serve para conferir a
+planilha contra o banco e para **repor o organograma depois de uma remigração**:
+`migrar.py` recria as linhas de `pessoas` (as contas ele preserva; o setor e a
+chefia, ainda não). [CONFIRMAR com o DBA: preservar `setor` e `supervisor_id`
+entre remontagens, como `restaurar_usuarios` já faz com as contas.]

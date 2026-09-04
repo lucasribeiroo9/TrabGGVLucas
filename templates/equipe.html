@@ -1,50 +1,90 @@
 {% extends "base.html" %}{% from "macros.html" import info %}{% set pg='equipe' %}
 {% block titulo %}Equipe{% endblock %}{% block corpo %}
 
-<div class="cal-topo"><h1>Equipe</h1></div>
-<p class="sub">{{ pessoas|length }} pessoa(s) · {{ sem_setor }} ativa(s) sem setor definido.</p>
+{# A equipe agrupada por SETOR. A lista de setores vem do banco
+   (`fluxo_etapas.grupo`) e chega pronta em `ordem_setores` — nada de nomes de
+   setor escritos aqui: o dia em que o mapa ganhar um setor, esta tela ganha
+   junto, sem ninguém tocar em template. #}
 
+<div class="cal-topo"><h1>Equipe</h1></div>
+<p class="sub">{{ total }} pessoa(s) no cadastro · {{ ativas }} ativa(s) ·
+  {{ com_acesso }} com acesso ao sistema · {{ ordem_setores|length }} setores.</p>
+
+{# Primeiro o que trava trabalho. Pessoa sem setor não aprova inicial nenhuma:
+   o gate `setor_peticao_inicial` pergunta por `pessoas.setor`, e quem está sem
+   ele fica de fora de toda fila por setor. Enterrado no fim de uma tabela de
+   72 linhas, isso não aparece. #}
 {% if sem_setor %}
-<div class="aviso">
-  <b>[CONFIRMAR — pergunta 30]</b> A base de origem (FUNCIONARIOS) traz FUNÇÕES, não setor nem
-  organograma. <code>equipe.py</code> nasceu com AJUSTES e CHEFIA <b>vazios</b> de propósito:
-  cargo e chefia inventados apareceriam aqui como se fossem fato, e organograma errado manda
-  tarefa para a pessoa errada. Falta o Lucas fechar a lista de setores e dizer quem chefia
-  cada um.
+<div class="cartao">
+  <h2>Sem setor · {{ sem_setor|length }} ativa(s)</h2>
+  <p class="sub">É esta a fila que trava a aprovação de petição: o gate
+    <code>setor_peticao_inicial</code> pergunta por <code>pessoas.setor</code>, e quem está
+    sem setor não aparece em fila nenhuma. Abra a ficha e escolha o setor —
+    ou preencha todos de uma vez a partir da planilha, com
+    <code>equipe_setores.py</code>.</p>
+  <table>
+    <tr><th>pessoa</th><th>papéis na origem</th><th>perfil</th><th>responde a</th>
+        <th class="num">tarefas</th><th class="num">processos</th></tr>
+    {% for p in sem_setor %}<tr>
+      <td><a href="/equipe/{{ p.id }}">{{ p.nome }}</a></td>
+      <td class="sub">{{ p.papeis|lower or '—' }}</td>
+      <td class="sub">{{ p.perfil|lower or 'sem conta' }}</td>
+      <td class="sub">{{ p.supervisor or '—' }}</td>
+      <td class="num">{{ p.abertas }}</td>
+      <td class="num">{{ p.processos }}</td></tr>{% endfor %}
+  </table>
+  {% if sem_setor_inativas %}
+  <p class="sub">Mais {{ sem_setor_inativas|length }} pessoa(s) inativas também estão sem
+    setor. Não travam nada — quem saiu não entra em fila.</p>
+  {% endif %}
 </div>
+{% else %}
+<div class="aviso ok">Todo mundo que está ativo tem setor.</div>
 {% endif %}
 
-<div class="colunas">
-  <div class="cartao">
-    <h2>Setores propostos</h2>
-    <p class="sub">Resposta 8 do Lucas: "existe um setor próprio para cada etapa". Então o
-      setor não é rótulo genérico — é quem responde pela etapa.</p>
-    <ul>{% for s in setores %}<li>{{ s }}</li>{% endfor %}</ul>
-  </div>
-  <div class="cartao">
-    <h2>Setores que a governança usa hoje</h2>
-    <p class="sub">São os nomes que estão em <code>fluxo_etapas.grupo</code>. Enquanto as duas
-      listas não forem a mesma, a tela mostra o grupo da ETAPA (que é dado, vindo da tabela) e
-      a lista ao lado serve só ao cadastro de pessoa. Ver docs/portal-adaptacoes.md.</p>
-    <ul>{% for s in setores_da_governanca %}<li>{{ s.grupo }} → {{ s.grupo|setor_etapa }}</li>{% endfor %}</ul>
-  </div>
-</div>
+{% for setor in ordem_setores %}
+{% set gente = grupos.get(setor, []) %}
+<details class="cartao" {{ 'open' if gente }}>
+  <summary><b>{{ setor }}</b> · {{ gente|length }} pessoa(s)</summary>
+  {% if gente %}
+  <table>
+    <tr><th>pessoa</th><th>papéis na origem</th><th>perfil</th><th>responde a</th>
+        <th class="num">equipe</th><th class="num">tarefas</th><th class="num">processos</th>
+        <th>situação</th></tr>
+    {% for p in gente %}<tr class="{{ '' if p.ativo else 'fim' }}">
+      <td><a href="/equipe/{{ p.id }}">{{ p.nome }}</a></td>
+      <td class="sub">{{ p.papeis|lower or '—' }}</td>
+      <td class="sub">{{ p.perfil|lower or 'sem conta' }}</td>
+      <td class="sub">{% if p.supervisor_id %}<a href="/equipe/{{ p.supervisor_id }}">{{ p.supervisor }}</a>{% else %}—{% endif %}</td>
+      <td class="num">{{ p.equipe_dele or '' }}</td>
+      <td class="num">{{ p.abertas }}</td>
+      <td class="num">{{ p.processos }}</td>
+      <td class="sub">{{ 'ativa' if p.ativo else 'inativa' }}</td></tr>{% endfor %}
+  </table>
+  {% else %}
+  <p class="sub">Nenhuma pessoa neste setor. O setor existe no mapa de etapas
+    (<a href="/fluxos">Governança</a>) e a fila dele não tem dono — o que é informação,
+    não erro de cadastro.</p>
+  {% endif %}
+</details>
+{% endfor %}
 
-<div class="cartao"><table>
-<tr><th>pessoa</th><th>setor</th><th>papéis na origem</th><th>responde a</th>
-    <th class="num">tarefas abertas</th><th class="num">processos</th><th>acesso</th><th>ativo</th></tr>
-{% for p in pessoas %}<tr class="{{ '' if p.ativo else 'fim' }}">
-  <td>{{ p.nome }}</td>
-  <td>{{ p.setor or '—' }}</td>
-  <td class="sub">{{ p.papeis or '—' }}</td>
-  <td class="sub">{{ p.supervisor or '—' }}</td>
-  <td class="num">{{ p.abertas }}</td>
-  <td class="num">{{ p.processos }}</td>
-  <td>{{ 'sim' if p.tem_acesso else 'não' }}</td>
-  <td>{{ 'sim' if p.ativo else 'não' }}</td></tr>{% endfor %}
-</table></div>
+<details class="cartao">
+  <summary><b>Carga de trabalho</b> · a conta que a distribuição usa</summary>
+  <p class="sub">Urgente pesa 3, atrasada 2, o resto 1. É a mesma conta da distribuição
+    automática — duas contas diferentes explicariam uma distribuição que não aconteceu.</p>
+  <table>
+    <tr><th>pessoa</th><th>setor</th><th class="num">abertas</th><th class="num">peso</th></tr>
+    {% for c in carga %}<tr>
+      <td><a href="/equipe/{{ c.id }}">{{ c.nome }}</a></td>
+      <td class="sub">{{ c.setor or '—' }}</td>
+      <td class="num">{{ c.abertas }}</td>
+      <td class="num">{{ c.peso }}</td></tr>{% endfor %}
+  </table>
+</details>
 
-<p class="sub">Acesso se abre por linha de comando: <code>python3 auth.py equipe</code>. A
-  senha sai provisória e aparece UMA vez — não fica escrita em lugar nenhum do repositório, e
-  na primeira entrada o sistema obriga a trocar.</p>
+<p class="sub">Setor e chefia se editam na ficha de cada pessoa, e cada mudança deixa linha em
+  <code>auditoria</code>. Acesso ao sistema se abre por linha de comando
+  (<code>python3 auth.py equipe</code>): a senha sai provisória, aparece UMA vez — não fica
+  escrita em lugar nenhum do repositório — e na primeira entrada o sistema obriga a trocar.</p>
 {% endblock %}

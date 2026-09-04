@@ -109,7 +109,8 @@ DOC_NOME = {"CNH_RG": "RG ou CNH", "CTPS": "CTPS", "TRCT": "TRCT",
             "CONTRATO": "contrato de honorários assinado", "OUTRO": "outro documento"}
 
 # O setor que responde pela aprovação da inicial (resposta 8 do Lucas). É o
-# mesmo texto de `pessoas.setor` e de `equipe.SETORES`.
+# mesmo texto de `pessoas.setor` e da lista que `equipe.setores()` lê do banco
+# (`fluxo_etapas.grupo`) — os dois lados vêm da mesma coluna, de propósito.
 SETOR_PETICAO_INICIAL = "Petição Inicial"
 
 

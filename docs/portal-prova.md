@@ -821,3 +821,291 @@ respostas 500: 0 · o processo de prova continua em CONHECIMENTO
 - Arquivos alterados: `app.py`, `banco.py`, `execucao.py`, `fluxo.py`,
   `auth.py`, `templates/base.html`, `templates/tarefas.html`,
   `templates/processo.html`, e estes dois documentos. Nenhum commit.
+
+---
+
+# A prova do organograma editável (`/equipe/{id}`)
+
+> Rodada em 04/09/2026, na porta **8771**, contra o banco de prova
+> `trab_prova` (Postgres local). **O banco foi devolvido ao estado em que
+> estava** — a conferência final está no fim desta seção.
+>
+> Os nomes que aparecem aqui são de funcionários do escritório, o que a regra da
+> casa permite. **Nenhum nome de cliente, CPF, telefone, e-mail de cliente ou
+> número CNJ.** Os clientes citados aparecem só pelo id.
+>
+> A senha da conta de prova não está escrita aqui, como não está em lugar nenhum
+> do repositório.
+
+```bash
+GGV_DSN='postgresql://postgres:***@localhost:5432/trab_prova' GGV_SEGREDO=… ./rodar.sh
+# banco: postgresql://***@localhost:5432/trab_prova
+# ✓ no ar em http://127.0.0.1:8771
+```
+
+## 1. A ficha abre, nas quatro formas que existem
+
+`pessoas` tem 72 linhas, 36 ativas, e no início da rodada **nenhuma** tinha setor
+ou supervisor — é o estado real do cadastro depois da migração.
+
+```
+estado: 1=sem setor/sem chefe (inativa, sem conta) · 8=Jurídico/chefe 9 · 9=Petição Inicial/sem chefe
+
+GET  /equipe                             200    23.658 bytes
+GET  /equipe/9    com setor, sem chefe, com acesso (GESTOR)      200   36.420
+GET  /equipe/8    com setor, com chefe,  com acesso (ADVOGADO)   200   41.032
+GET  /equipe/1    sem setor, sem chefe,  SEM conta de acesso     200   39.833
+GET  /equipe/999999   pessoa que não existe                      302   volta para /equipe com o recado
+```
+
+A ficha de quem não tem conta diz o que falta, em vez de mostrar campo vazio:
+“ainda não tem acesso ao sistema”, e no bloco de permissões “esta pessoa não tem
+conta de acesso”. Abrir acesso continua sendo outro ato (`auth.py equipe`), que
+mostra a senha provisória uma vez só.
+
+## 2. Mudar setor e chefe: a linha em `auditoria`, com valor antigo e novo
+
+```
+POST /equipe/9/setor  {'setor': 'Petição Inicial'}  302  setor: sem setor → Petição Inicial
+POST /equipe/9/setor  {'setor': 'Petição Inicial'}  302  o setor já era esse       ← não grava nem audita
+POST /equipe/8/setor  {'setor': 'Jurídico'}         302  setor: sem setor → Jurídico
+POST /equipe/8/chefe  {'supervisor_id': '9'}        302  responde a: ninguém → ALISSON LEAL
+```
+
+```
+ id | tabela   | registro_id | campo         | valor_antigo    | valor_novo             | quem
+----+----------+-------------+---------------+-----------------+------------------------+--------------
+  6 | pessoas  |           9 | setor         |                 | Petição Inicial        | ALISSON LEAL
+  7 | pessoas  |           8 | setor         |                 | Jurídico               | ALISSON LEAL
+  8 | pessoas  |           8 | supervisor_id |                 | ALISSON LEAL           | ALISSON LEAL
+  9 | pessoas  |           9 | setor         | Petição Inicial | Gestão                 | ALISSON LEAL
+ 10 | pessoas  |           9 | supervisor_id |                 | GLAUCO GIMENEZ VARELLA | ALISSON LEAL
+ 11 | usuarios |           1 | papel         | DIRECAO         | GESTOR                 | ALISSON LEAL
+```
+
+O chefe é guardado pelo **nome**, não pelo id: quem lê a auditoria seis meses
+depois quer o nome, e o id não o tem.
+
+## 3. Quem pode o quê — as três rotas de escrita, com a mesma conta em três perfis
+
+O perfil da conta que age foi trocado no banco entre as três passagens; a pessoa,
+a sessão e as rotas são as mesmas.
+
+```
+perfil ADVOGADO
+  GET  /equipe                    403      (a tela nem existe para este perfil)
+  GET  /equipe/9                  403
+  POST /equipe/9/setor            403
+  POST /equipe/9/chefe            403
+  POST /equipe/9/perfil           403
+  no banco depois: nada mudou
+
+perfil GESTOR
+  GET  /equipe                    200
+  POST /equipe/9/setor            302   setor: Petição Inicial → Gestão
+  POST /equipe/9/chefe            302   responde a: ninguém → GLAUCO GIMENEZ VARELLA
+  POST /equipe/9/perfil           403   ← perfil de acesso é só da Direção
+
+perfil DIRECAO
+  POST /equipe/9/setor            302   o setor já era esse
+  POST /equipe/9/chefe            302   a chefia já era essa
+  POST /equipe/9/perfil           302   perfil: direcao → gestor
+```
+
+**Ver não é alterar.** `auth.telas_de` dá a tela inteira a quem é do *setor*
+Direção, seja qual for o papel da conta — isso é regra de leitura. A escrita sai
+de `usuarios.papel`:
+
+```
+conta ADVOGADO, pessoa lotada no setor Direção
+  GET  /equipe/9                  200   e a ficha diz "Só gestão e direção alteram setor e chefia"
+  POST /equipe/8/setor            403
+  POST /equipe/8/perfil           403
+```
+
+E a última conta de direção não se desfaz sozinha:
+
+```
+contas DIRECAO ativas: 1
+  POST /equipe/9/perfil {'papel':'GESTOR'}   302  esta é a última conta com perfil de direção. Tirá-la
+                                                  deixaria o sistema sem quem reabre processo encerrado —
+                                                  e sem quem devolva este perfil a alguém. Promova outra
+                                                  pessoa antes
+contas DIRECAO ativas: 2
+  POST /equipe/9/perfil {'papel':'GESTOR'}   302  perfil: direcao → gestor
+```
+
+## 4. As recusas, cada uma com o recado de quem clicou
+
+Estado no momento: 8 responde a 9, 9 responde a 7.
+
+```
+POST /equipe/9/chefe  {'supervisor_id':'8'}   302  isso fecharia um laço na chefia (AMANDA ROCHA →
+                                                   ALISSON LEAL): a pessoa escolhida já responde,
+                                                   direta ou indiretamente, a esta. Desfaça o outro
+                                                   lado primeiro
+POST /equipe/7/chefe  {'supervisor_id':'8'}   302  isso fecharia um laço na chefia (AMANDA ROCHA →
+                                                   ALISSON LEAL → GLAUCO GIMENEZ VARELLA): …
+                                                   ← a volta longa, A→B→C→A
+POST /equipe/9/chefe  {'supervisor_id':'9'}   302  ninguém responde a si mesmo — escolha outra pessoa,
+                                                   ou deixe em branco
+POST /equipe/9/chefe  {'supervisor_id':'abc'} 302  escolha a pessoa na lista — o valor recebido não é
+                                                   um cadastro do escritório
+POST /equipe/9/chefe  {'supervisor_id':'999999'} 302 (idem)
+POST /equipe/9/setor  {'setor':'Recursos Humanos'} 302 “Recursos Humanos” não é um setor do escritório
+                                                      — escolha um da lista
+POST /equipe/9/setor  {'setor':'petição inicial'}  302 (idem: a comparação é exata, contra a lista do banco)
+POST /equipe/8/perfil {'papel':'SOCIO'}       302  “SOCIO” não é um perfil de acesso — escolha um da lista
+POST /equipe/8/perfil {'papel':''}            302  (idem)
+POST /equipe/1/perfil {'papel':'GESTOR'}      302  esta pessoa ainda não tem conta de acesso; abrir
+                                                   acesso é outro ato (auth.py equipe), que gera a
+                                                   senha provisória
+POST /equipe/9/nada   {'x':'1'}               302  “nada” não é um campo desta ficha
+POST /equipe/9/setor  sem o token de CSRF     403
+
+respostas 500: 0 · depois de tudo, o banco não tinha mudado: 7=—/— · 8=Jurídico/9 · 9=Gestão/7
+```
+
+## 5. A prova que fecha o círculo
+
+O gate `setor_peticao_inicial` já existia em `fluxo.py` e não tinha como ser
+satisfeito: **ninguém tinha setor**. Agora o setor se grava pela ficha, e é só
+ele que muda o resultado. Um cliente em `PETICAO_AGUARDANDO_APROVACAO`, com a
+minuta anexada (as duas linhas de prova em `documentos`/`peticoes` foram
+apagadas no fim):
+
+```
+POST /equipe/9/setor {'setor':'Documentação'}          302  (a ficha grava o setor)
+POST /mover/clientes/45 para=PETICAO_APROVADA          302  esta ação é da equipe de Petição Inicial
+                                                            (resposta 8 do Lucas); seu setor é Documentação
+     cliente 45: PETICAO_AGUARDANDO_APROVACAO          ← não andou
+
+POST /equipe/9/setor {'setor':'Petição Inicial'}       302  setor: Documentação → Petição Inicial
+POST /mover/clientes/45 para=PETICAO_APROVADA          302  etapa alterada e registrada no histórico
+     cliente 45: PETICAO_APROVADA                      ← andou
+
+auditoria: 2026-09-03 23:33  setor: Documentação → Petição Inicial  (por ALISSON LEAL)
+```
+
+E a ficha do cliente já dizia o impedimento antes da tentativa, com o caminho:
+*“Pedir a alguém da equipe de Petição Inicial que aprove ou devolva”*, com link
+para `/equipe` — `fluxo.caminho`, não texto no template.
+
+## 6. `/equipe` agrupada, com o que trava trabalho no topo
+
+```
+GET /equipe   200
+  72 pessoa(s) no cadastro · 36 ativa(s) · 36 com acesso ao sistema · 8 setores.
+  Sem setor · 30 ativa(s)          ← o bloco do topo
+  Atendimento · 0 pessoa(s)        Captação · 1        Direção · 1
+  Documentação · 1                 Financeiro · 0      Gestão · 0
+  Jurídico · 2                     Petição Inicial · 1
+```
+
+Todo setor do banco aparece, mesmo vazio: setor sem ninguém é informação — é uma
+fila do mapa sem dono —, não erro de cadastro. Os oito nomes vêm de
+`fluxo_etapas.grupo`; nenhum está escrito no template.
+
+## 7. `equipe_setores.py` — o lote
+
+CSV recusado (uma linha ruim impede a carga toda):
+
+```
+$ python3 equipe_setores.py ruim.csv --aplicar
+✗ 6 linha(s) recusada(s). NADA foi gravado — planilha aplicada pela metade é pior que planilha nenhuma.
+
+  linha   3  Kayo                    “Recursos Humanos” não é setor do escritório (os que valem:
+                                     Atendimento, Captação, Direção, Documentação, Financeiro,
+                                     Gestão, Jurídico, Petição Inicial)
+  linha   4  Fulana Que Nao Existe   “Fulana Que Nao Existe” não está no cadastro (casando por nome
+                                     normalizado)
+  linha   5  AMANDA ROCHA            esta linha fecha um laço de chefia: AMANDA ROCHA → DIEGO BARBOSA
+  linha   6  DIEGO BARBOSA           esta linha fecha um laço de chefia: DIEGO BARBOSA → AMANDA ROCHA
+  linha   7  Gustavo de Jesus        não tem conta de acesso: o perfil não tem onde ser gravado
+                                     (abrir acesso é auth.py equipe)
+  linha   8  Kayo                    esta pessoa aparece duas vezes na planilha
+
+  1 linha(s) estavam boas e ficaram de fora junto. Conserte as de cima e rode de novo.
+```
+
+O laço das linhas 5 e 6 é o caso que nenhuma linha mostra sozinha: cada uma
+passa, e a **soma** delas fecha a volta. Cabeçalho incompleto também para tudo:
+`faltam colunas no cabeçalho: chefe, perfil`.
+
+CSV bom, primeiro conferindo, depois aplicando:
+
+```
+$ python3 equipe_setores.py bom.csv
+5 linha(s) conferidas, nenhuma recusa.
+  GLAUCO GIMENEZ VARELLA    setor=Direção
+  ALISSON LEAL              setor=Petição Inicial · responde a=GLAUCO GIMENEZ VARELLA · perfil=GESTOR
+  KAYO                      setor=Jurídico · responde a=ALISSON LEAL
+  LARISSA BATISTA           setor=Documentação · responde a=ALISSON LEAL · perfil=ADVOGADO
+  BRUNA MARCILIO BARRETO    setor=Captação · responde a=GLAUCO GIMENEZ VARELLA
+Nada foi gravado: isto foi a conferência. Rode com --aplicar.
+
+$ python3 equipe_setores.py bom.csv --aplicar --quem <e-mail do escritório>
+✓ 7 alteração(ões) gravada(s), cada uma com linha em auditoria.
+
+$ python3 equipe_setores.py bom.csv --aplicar --quem <e-mail do escritório>
+✓ 0 alteração(ões) gravada(s)          ← idempotente
+
+$ python3 equipe_setores.py --exportar saida.csv
+✓ 72 linha(s) — o organograma como está agora.
+```
+
+O CSV bom casa nomes com caixa e acento diferentes (`alisson leal`, `KAYO`,
+`Glauco Gimenez Varella`) — a comparação é por `nome_norm`, a mesma da migração.
+As sete alterações apareceram em `auditoria` com `ALISSON LEAL` como autor,
+vindo de `--quem`.
+
+## 8. Nenhuma regressão nas telas
+
+```
+GET /  /clientes  /processos  /audiencias  /prazos  /empresas  /testemunhas
+    /conferencias  /tarefas  /equipe  /equipe/9  /equipe/1  /fluxos  /painel
+    /clientes/12  /processos/1  /saude
+todas 200 · respostas 500: 0 · nenhuma linha de erro em servidor.log
+```
+
+## Rastro desta rodada
+
+`trab_prova` foi devolvido ao estado em que estava. Antes e depois, os mesmos
+números:
+
+```
+pessoas com setor: 0          pessoas com chefe: 0        auditoria: 0
+historico_etapas (maior id): 10183                        peticoes: 0
+documentos: 8                 clientes em PETICAO_AGUARDANDO_APROVACAO: 54
+usuarios: ADVOGADO=32, GESTOR=4
+```
+
+O que foi criado e desfeito: três linhas de `documentos` e três de `peticoes`
+(as minutas de prova), duas linhas de `historico_etapas`, quinze de `auditoria`,
+o setor e a chefia gravados nas provas, os perfis trocados de ida e volta, e o
+status dos clientes 12 e 45 (revertido com os gatilhos de governança desligados
+só para a reversão, e religados em seguida — a ida passou por eles, que é o que
+a prova exigia).
+
+Portal: subiu na 8771 e foi derrubado por `./parar.sh`. A 8770 (o Prev) e a 8700
+(o financeiro) nunca foram tocadas. Nenhuma chamada ao Supabase nem ao Airtable.
+
+Arquivos alterados: `app.py`, `equipe.py`, `templates/equipe.html`,
+`templates/pessoa.html` (novo), `equipe_setores.py` (novo), um comentário em
+`fluxo.py`, e estes dois
+documentos. Nenhum commit.
+
+## O que ficou em aberto
+
+- **Não há nenhuma conta com perfil `DIRECAO` no cadastro** (são 32 `ADVOGADO` e
+  4 `GESTOR`). Enquanto não houver, o campo de perfil de acesso fica só de
+  leitura para todo mundo — e é assim de propósito: promover alguém a sócio não
+  é ato de gestor. A primeira conta de direção sai do banco ou de `auth.py`.
+  [CONFIRMAR com o Lucas: quem são as contas de direção.]
+- **`migrar.py` recria as linhas de `pessoas`**, e com elas o setor e a chefia se
+  perdem — as contas ele já preserva (`restaurar_usuarios`). Enquanto isso não
+  for tratado, a rede é `equipe_setores.py --exportar` antes da remigração e
+  `--aplicar` depois. [CONFIRMAR com o DBA.]
+- **Remapear etapa → setor pela tela** segue fora: decisão do Lucas na resposta
+  30 (“por enquanto pode seguir dessa forma”). Hoje isso é `fluxo_etapas.grupo`,
+  editado no mapa.

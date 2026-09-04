@@ -1726,32 +1726,143 @@ async def tarefa_status(req: Request):
     return _volta(req, f.get("voltar") or "/tarefas", ok="tarefa atualizada", erro=erro)
 
 
+#  Quem MEXE no organograma. É conferido aqui, no servidor, e não pelo botão
+#  que a tela mostra ou esconde — a tela é conveniência.
+#
+#  Setor e chefia: GESTOR ou DIRECAO. Perfil de acesso: só DIRECAO, porque
+#  mudar o perfil é mudar quem reabre processo encerrado e quem dá caso por
+#  perdido — decisão de sócio (resposta 30 do Lucas).
+#
+#  Não vale aqui o atalho de `auth.telas_de`, que dá a quem é do setor Direção
+#  a visão de tudo seja qual for o papel da conta: aquilo é regra de LEITURA.
+#  Ver não é alterar, e um estagiário lotado na Direção não promove ninguém.
+def _pode_organograma(u):
+    return bool(u) and auth.pode(u.get("papel"), "GESTOR")
+
+
+def _pode_perfil(u):
+    return bool(u) and auth.pode(u.get("papel"), "DIRECAO")
+
+
 async def equipe_tela(req: Request):
+    """Quem é quem, agrupado por SETOR — e, no topo, quem ainda não tem um.
+
+    A ordem não é enfeite: pessoa sem setor é quem não aprova inicial nenhuma
+    (o gate `setor_peticao_inicial` pergunta por `pessoas.setor`), então essa é
+    a fila que trava trabalho. Enterrada no fim de uma tabela de 72 linhas, ela
+    não existe.
+    """
     u, r = exige(req, "equipe")
     if r:
         return r
     db = conectar()
     try:
+        grupos = equipe.por_setor(db)
+        sem_setor = grupos.pop(None, [])
         ctx = dict(
-            pessoas=db.execute("""SELECT p.*, s.nome supervisor,
-                        (SELECT COUNT(*) FROM tarefas t WHERE t.responsavel_id=p.id
-                           AND t.status IN ('ABERTA','EM_ANDAMENTO')) abertas,
-                        (SELECT COUNT(*) FROM processos pr WHERE pr.advogado_id=p.id) processos,
-                        (SELECT string_agg(pp.papel, ', ') FROM pessoa_papeis pp
-                           WHERE pp.pessoa_id=p.id) papeis,
-                        (SELECT COUNT(*) FROM usuarios us WHERE us.pessoa_id=p.id) tem_acesso
-                     FROM pessoas p LEFT JOIN pessoas s ON s.id = p.supervisor_id
-                     ORDER BY (NOT p.ativo), p.setor NULLS LAST, p.nome""").fetchall(),
+            grupos=grupos,
+            ordem_setores=equipe.setores(db),
+            sem_setor=[p for p in sem_setor if p["ativo"]],
+            sem_setor_inativas=[p for p in sem_setor if not p["ativo"]],
             carga=equipe.carga(db),
-            setores=equipe.SETORES,
-            setores_da_governanca=db.execute("""SELECT DISTINCT grupo FROM fluxo_etapas
-                                                WHERE grupo IS NOT NULL ORDER BY grupo""").fetchall(),
-            sem_setor=db.execute("""SELECT COUNT(*) FROM pessoas
-                                    WHERE ativo=true AND setor IS NULL""").fetchone()[0],
+            total=db.execute("SELECT COUNT(*) FROM pessoas").fetchone()[0],
+            ativas=db.execute("SELECT COUNT(*) FROM pessoas WHERE ativo=true").fetchone()[0],
+            com_acesso=db.execute("""SELECT COUNT(*) FROM usuarios u JOIN pessoas p
+                                     ON p.id=u.pessoa_id WHERE u.ativo=true""").fetchone()[0],
+            pode_editar=_pode_organograma(u),
         )
         return pagina(req, "equipe.html", **ctx)
     finally:
         db.close()
+
+
+async def pessoa_ficha(req: Request):
+    """A ficha da pessoa: identidade, setor, chefia, carga e o que ela pode mover.
+
+    Uma coluna, blocos que abrem — o padrão das outras fichas. O que ela pode
+    fazer no sistema é LIDO de `fluxo_transicoes`/`fluxo_etapas`, nunca escrito
+    aqui nem no template: a permissão que se explica em dois lugares diverge no
+    primeiro dia em que alguém muda uma.
+    """
+    u, r = exige(req, "equipe")
+    if r:
+        return r
+    pid = int(req.path_params["id"])
+    db = conectar()
+    try:
+        p = equipe.pessoa(db, pid)
+        if not p:
+            return _volta(req, "/equipe", erro="essa pessoa não está no cadastro")
+        pode, nao, pelo_setor = equipe.poderes(db, p["papel"], p["setor"])
+        abaixo = set(equipe.descendentes(db, pid))
+        ctx = dict(
+            p=p,
+            papeis=equipe.papeis(db, pid),
+            setores=equipe.setores(db),
+            perfis=equipe.perfis(db),
+            descricao_perfis=auth.PERFIS,
+            # a lista de chefes possíveis já sai SEM a própria pessoa e sem
+            # quem responde a ela: oferecer na tela o que o servidor recusaria
+            # é ensinar a errar
+            chefes=[c for c in db.execute(
+                """SELECT id, nome, setor FROM pessoas
+                   WHERE ativo = true AND id <> ? ORDER BY nome""", (pid,)).fetchall()
+                if c["id"] not in abaixo],
+            abaixo_n=len(abaixo),
+            subordinados=equipe.subordinados(db, pid),
+            chefia=[equipe.pessoa(db, x) for x in equipe.cadeia_acima(db, pid)],
+            carga=equipe.carga_de(db, pid),
+            etapas_setor=equipe.etapas_do_setor(db, p["setor"]),
+            pode=pode, nao_pode=nao, pelo_setor=pelo_setor,
+            rastro=equipe.rastro(db, pid, p["usuario_id"]),
+            pode_editar=_pode_organograma(u),
+            pode_perfil=_pode_perfil(u),
+        )
+        return pagina(req, "pessoa.html", **ctx)
+    finally:
+        db.close()
+
+
+async def pessoa_salvar(req: Request):
+    """Setor, chefia e perfil — uma rota só, porque a diferença entre elas é a
+    PERMISSÃO, e permissão espalhada por três rotas é permissão que um dia
+    diverge. O `campo` diz qual é; cada um tem sua exigência, conferida aqui.
+
+    Recusa vira recado na volta, nunca 500: a escrita roda em SAVEPOINT (é o
+    que `banco.Ponte` faz por baixo) e o erro do gatilho ou do CHECK sai em
+    português por `_recado`.
+    """
+    u, r = exige(req, "equipe")
+    if r:
+        return r
+    pid = int(req.path_params["id"])
+    campo = req.path_params["campo"]
+    f = await req.form()
+    db = conectar()
+    erro = recado = None
+    try:
+        if campo == "perfil":
+            if not _pode_perfil(u):
+                # 403 de verdade, não redirecionamento: quem chegou aqui sem ser
+                # da Direção não errou de botão — não há botão
+                return pagina(req, "negado.html", tela="perfil de acesso da equipe",
+                              _http=403)
+            mudou, recado = equipe.mudar_perfil(db, pid, f.get("papel"), _eu(db, u))
+        elif not _pode_organograma(u):
+            return pagina(req, "negado.html", tela="organograma da equipe", _http=403)
+        elif campo == "setor":
+            mudou, recado = equipe.mudar_setor(db, pid, f.get("setor"), _eu(db, u))
+        elif campo == "chefe":
+            mudou, recado = equipe.mudar_chefe(db, pid,
+                                               _pessoa_do_form(f.get("supervisor_id")),
+                                               _eu(db, u))
+        else:
+            raise ValueError(f"“{str(campo)[:30]}” não é um campo desta ficha")
+    except (ValueError,) + banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
+    return _volta(req, f"/equipe/{pid}", ok=recado or "nada mudou", erro=erro)
 
 
 async def fluxos(req: Request):
@@ -1905,6 +2016,10 @@ rotas = [
     Route("/tarefas", tarefas),
     Route("/tarefa/{id:int}/status", tarefa_status, methods=["POST"]),
     Route("/equipe", equipe_tela),
+    Route("/equipe/{id:int}", pessoa_ficha),
+    #  Uma rota só para as três edições da ficha: o que muda entre elas é a
+    #  permissão, e `{campo}` a nomeia. Três rotas quase iguais divergem.
+    Route("/equipe/{id:int}/{campo:str}", pessoa_salvar, methods=["POST"]),
     Route("/fluxos", fluxos),
     Route("/painel", painel),
 
