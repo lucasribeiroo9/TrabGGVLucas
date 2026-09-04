@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Sobe o portal trabalhista no boot e o reergue se ele cair.
+
+     Instalar em ~/Library/LaunchAgents/ e carregar com:
+       launchctl load -w ~/Library/LaunchAgents/com.ggvtrab.portal.plist
+
+     Trocar SEU_USUARIO pelo nome da conta de serviço da máquina, e
+     TROCAR_POR_UM_SEGREDO_LONGO por um valor gerado nesta máquina:
+       python3 -c "import secrets;print(secrets.token_urlsafe(48))"
+
+     A porta é 8771 de propósito: 8770 é o previdenciário e 8700 é o portal
+     financeiro. Três sistemas na mesma máquina, três portas.
+
+     A ligação com o banco NÃO vai aqui: ela fica no Keychain, na chave
+     `supabase-trab`, e `chaves.py` a lê. Segredo de banco em arquivo de
+     configuração é segredo em backup, em Time Machine e em captura de tela. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.ggvtrab.portal</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/SEU_USUARIO/TrabGGVLucas/.venv/bin/uvicorn</string>
+    <string>app:app</string>
+    <string>--host</string><string>127.0.0.1</string>
+    <string>--port</string><string>8771</string>
+  </array>
+
+  <key>WorkingDirectory</key><string>/Users/SEU_USUARIO/TrabGGVLucas</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Assina o cookie de sessão. `app.py` RECUSA subir sem ele, de
+         propósito: segredo fixo escrito no repositório valeria em toda
+         instalação e deixaria forjar sessão. -->
+    <key>GGV_SEGREDO</key><string>TROCAR_POR_UM_SEGREDO_LONGO</string>
+    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key>
+  <dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>20</integer>
+
+  <key>StandardOutPath</key><string>/Users/SEU_USUARIO/TrabGGVLucas/servidor.log</string>
+  <key>StandardErrorPath</key><string>/Users/SEU_USUARIO/TrabGGVLucas/servidor.log</string>
+</dict></plist>

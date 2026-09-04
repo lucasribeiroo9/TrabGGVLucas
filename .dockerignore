@@ -1,0 +1,22 @@
+# Nada de dado de cliente na imagem. A mesma lista do .gitignore, pelo mesmo
+# motivo: a imagem sai desta máquina e vai para um registro remoto.
+trabalhista.db
+trabalhista.db-*
+segredos.db
+segredos.db-*
+dados/
+lotes/
+*.log
+*.xlsx
+*.xlsm
+
+# ambiente e cache — a imagem instala as dependências do zero
+.venv/
+__pycache__/
+*.pyc
+servidor.pid
+.DS_Store
+.git/
+
+# o esquema bruto do Airtable: só ids e opções, mas fica fora por prudência
+docs/.airtable_schema_raw.json

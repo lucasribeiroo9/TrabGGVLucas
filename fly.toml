@@ -1,0 +1,54 @@
+# O portal trabalhista no Fly.
+#
+#     fly launch --no-deploy --copy-config      # cria o app com este arquivo
+#     fly secrets set GGV_SUPABASE_TRAB='...'   # a URI do POOLER, ver abaixo
+#     fly secrets set GGV_SEGREDO="$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')"
+#     fly deploy
+#
+# ATENÇÃO à URI: use a do **pooler** do Supabase, não a conexão direta.
+#     postgresql://postgres.yzayjwlgjjnoxdxgruss:SENHA@aws-0-sa-east-1.pooler.supabase.com:6543/postgres
+# A direta (db.<projeto>.supabase.co) só tem endereço IPv6. A do pooler atende
+# em IPv4 e é a que `banco.py` monta sozinho quando o Keychain guarda só a
+# senha — aqui, como a URI vem inteira pelo segredo, ela é usada como está.
+# Porta 6543 é o pooler em modo TRANSAÇÃO; `banco.py` já sobe com
+# `prepare_threshold=None` por causa dele.
+#
+# O GGV_SEGREDO assina o cookie de sessão, e é dele que o portal tira quem é
+# quem e qual é o papel. Trocá-lo derruba as sessões abertas — quem estava
+# dentro só entra de novo. Nunca escreva o valor no repositório.
+
+app = "ggv-trabalhista"
+
+# São Paulo. O dado de cliente fica no Brasil, como no Supabase (sa-east-1) —
+# e a latência até o banco vira milissegundos em vez de uma travessia.
+primary_region = "gru"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8771"
+  GGV_SERVIDOR = "1"
+
+[http_service]
+  internal_port = 8771
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # zero não: a primeira visita da manhã esperaria a máquina subir E o poço de
+  # conexões reabrir. Uma máquina de pé é barata perto de um advogado parado.
+  min_machines_running = 1
+  processes = ["app"]
+
+  # `/saude` não exige sessão nem token de CSRF — é o healthcheck, e é a única
+  # rota livre no middleware. Perfeito para o Fly saber se o app está vivo.
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/saude"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
