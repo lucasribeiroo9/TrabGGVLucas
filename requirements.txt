@@ -20,6 +20,12 @@ h11==0.16.0
 click==8.5.0
 MarkupSafe==3.0.3
 
+# a migração
+# `migrar.py --baixar` fala com a API do Airtable por aqui. Estava de fora
+# porque a primeira carga veio pelo conector MCP, sem token — mas quem migra do
+# Mac usa o token, e sem esta linha o comando morre em ModuleNotFoundError
+# antes de tocar na rede.
+requests==2.32.5
+
 # --- ainda NÃO usados pelo portal, e por isso fora daqui de propósito:
 # cryptography   → cofre.py (o trabalhista não guarda senha de terceiro)
-# requests       → agenda_google.py (a agenda entra em outra rodada)
