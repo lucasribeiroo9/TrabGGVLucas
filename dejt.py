@@ -299,6 +299,9 @@ def main():
     p.add_argument("--amostra", action="store_true", help="a amostra sintética (não usa rede)")
     p.add_argument("--arquivo", help="lote já baixado, no formato do DJEN")
     p.add_argument("--djen", action="store_true", help="busca na API pública do CNJ")
+    p.add_argument("--oab", help="número da OAB do escritório: o recorte do que é nosso")
+    p.add_argument("--uf", default="SP", help="UF da OAB (padrão SP)")
+    p.add_argument("--tribunal", help="sigla, ex.: TRT2 — junto ou no lugar da OAB")
     p.add_argument("--dias", type=int, default=3, help="janela de dias, com --djen")
     p.add_argument("--resumo", action="store_true", help="o que já entrou")
     p.add_argument("--dsn", help="ligação com o Postgres (senão GGV_SUPABASE_TRAB)")
@@ -320,8 +323,15 @@ def main():
         itens = dados.get("items") or dados.get("registros") or dados
         print("do arquivo:", ingerir(bd, itens))
     elif a.djen:
-        sys.exit("--djen ainda não implementado: falta decidir o recorte (OAB do "
-                 "escritório) e provar a API contra o ambiente. Ver docs/dejt.md.")
+        import djen
+        if not (a.oab or a.tribunal):
+            sys.exit("✗ --djen precisa do recorte: --oab (com --uf) ou --tribunal.\n"
+                     "  Sem ele o DJEN devolve o diário do país inteiro, e nada\n"
+                     "  disso é nosso. Ver docs/dejt.md.")
+        lote = djen.buscar(oab=a.oab, uf=a.uf, tribunal=a.tribunal, dias=a.dias)
+        print(f"{len(lote)} comunicação(ões) na janela de {a.dias} dia(s).")
+        print("do DJEN:", ingerir(bd, lote, fonte="DJEN"))
+        resumo(bd)
     else:
         p.print_help()
     bd.close()

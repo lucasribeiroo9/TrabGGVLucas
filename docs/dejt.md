@@ -66,24 +66,54 @@ E por isso o que o mapa não reconhece **não é chutado**: cai em `OUTRO`, 5 di
 (CPC art. 218 §3º), com `[CONFIRMAR o tipo]` escrito na sugestão. Chutar tipo de
 prazo é errar vencimento.
 
-## O que falta — e depende de decisão, não de código
+## A fonte: DJEN — decisão do Lucas, 04/09/2026
 
-**1. A fonte.** É a única coisa que trava. Três caminhos:
+Entre DJEN, AASP e PJe, ficou o **DJEN**, e é a mais limpa das três: não pede
+credencial (é diário oficial), é nacional — não depende de a assinatura da AASP
+cobrir o trabalhista — e devolve o número do processo em **campo próprio**, não
+preso no meio do texto como no e-mail da AASP, onde o Prev precisa caçá-lo por
+expressão regular.
 
-| fonte | o que é | o que precisa |
-|---|---|---|
-| **DJEN / API Comunica do CNJ** | o diário nacional unificado, API pública, sem credencial | decidir o recorte: a **OAB do escritório** (número e UF). É o caminho mais limpo |
-| **AASP** | e-mail diário com as intimações, como o Prev faz | a assinatura da AASP cobre o trabalhista? e a senha de app do Gmail |
-| **PJe / TRT-2** | consulta direta | credencial e certificado |
+`djen.py` é o cliente, e `dejt.py --djen` já o chama:
 
-`dejt.py --djen` está escrito mas **desligado de propósito**: sai com um recado
-em vez de fingir que funciona. O host `comunicaapi.pje.jus.br` foi testado da
-sessão de 04/09/2026 e **a política de rede da sessão bloqueou** (403 no CONNECT
-do proxy) — não dá para provar a API de dentro do Claude Code na web. De uma
-máquina comum é uma chamada HTTPS simples.
+```bash
+./.venv/bin/python djen.py --oab 123456 --uf SP --dias 3 --cru lote.json
+./.venv/bin/python dejt.py --arquivo lote.json          # confere e grava
+./.venv/bin/python dejt.py --djen --oab 123456 --dias 3 # ou direto
+```
 
-**2. A OAB do escritório.** Sem ela não há recorte: o DJEN devolve o diário
-inteiro, e o que é nosso é o que está no nome dos nossos advogados.
+**Na primeira vez, use `--cru`**: ele baixa e salva sem gravar nada no banco,
+para a forma ser conferida antes de deixar entrar.
+
+### A trava: forma desconhecida é recusa, não palpite
+
+Mesma regra do `do_conector.py`. Cada campo tem uma lista de nomes candidatos
+(a API mistura camelCase e snake_case, e já trocou de um para o outro), e se
+nenhum casar num campo obrigatório o lote inteiro é **recusado**, com as chaves
+que de fato vieram impressas na tela. O modo de falha que isso evita é o pior
+possível: publicação gravada sem data é prazo que não nasce, e ninguém percebe.
+
+Provado sem tocar na rede, 7 de 7: aceita `items` em camelCase, `content` em
+snake_case e lista nua; **recusa** texto com nome desconhecido (e a mensagem
+diz qual nome veio), **recusa** resposta sem lista, pula item incompleto sem
+derrubar o lote, e `buscar()` sem recorte para antes de qualquer chamada.
+
+E o caminho inteiro, contra o banco: uma comunicação com CNJ do cadastro casou
+por `CNJ` e virou proposta de recurso ordinário vencendo em 17/09; uma com CNJ
+inexistente entrou marcada como órfã, com a proposta dela do mesmo jeito.
+
+### O que ainda falta para ligar
+
+**A OAB do escritório — número e UF.** É o recorte: sem ela o DJEN devolve o
+diário do país inteiro, e o que é nosso é o que sai no nome dos nossos
+advogados. `--tribunal TRT2` funciona como recorte grosso para um primeiro
+teste, mas não serve para o dia a dia.
+
+O host `comunicaapi.pje.jus.br` foi testado da sessão de 04/09/2026 e **a
+política de rede daquela sessão bloqueou** (403 no CONNECT do proxy): não dá
+para provar a API real de dentro do Claude Code na web. De uma máquina comum é
+uma chamada HTTPS simples, e é por isso que `--cru` existe — a primeira execução
+de verdade mostra a forma antes de qualquer coisa entrar no banco.
 
 **3. Quem recebe a tarefa.** A publicação casada com processo deve virar tarefa
 para quem? O `advogado_id` do processo, o setor Jurídico, ou uma fila só?
