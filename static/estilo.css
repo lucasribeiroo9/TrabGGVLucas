@@ -1298,3 +1298,20 @@ th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
 /* a tabela dentro de <details> não pode estourar a largura da página:
    ela rola dentro de si mesma */
 details.cartao table,.cartao table{display:block;overflow-x:auto;max-width:100%}
+
+/* ---- publicações do diário -------------------------------------------- */
+/* O texto do diário é longo, tem quebra própria e às vezes vem em coluna
+   estreita: `pre` preserva o que o tribunal escreveu, e o `wrap` impede que a
+   linha comprida arraste a página inteira para o lado. */
+.texto-diario{white-space:pre-wrap;word-break:break-word;max-height:22em;overflow:auto;
+  background:var(--fundo);border:1px solid var(--borda);border-radius:6px;
+  padding:.7em .9em;margin:.5em 0;font-size:0.8125rem;line-height:1.5}
+
+/* A proposta da máquina é visualmente SEPARADA do que o diário disse: quem lê
+   precisa saber, sem esforço, o que é fato publicado e o que é palpite nosso. */
+.proposta{border-left:3px solid var(--traco-ambar);background:var(--amarelo-bg);
+  color:var(--amarelo-fg);padding:.6em .9em;border-radius:0 6px 6px 0;margin:.6em 0}
+
+/* O contador do menu. Pequeno de propósito: é aviso, não alarme. */
+.chip-n{display:inline-block;min-width:1.4em;padding:0 .35em;border-radius:20px;
+  background:var(--traco-vermelho);color:#fff;font-size:0.6875rem;text-align:center}

@@ -134,8 +134,16 @@ def buscar(oab=None, uf=None, tribunal=None, dias=3, ate=None, por_pagina=100,
     fim = ate or date.today()
     inicio = fim - timedelta(days=dias)
     if not (oab or tribunal):
-        sys.exit("✗ diga o recorte: --oab/--uf (o que é nosso) ou --tribunal.\n"
-                 "  Sem recorte o DJEN devolve o diário do país inteiro.")
+        # Decisão do Lucas em 04/09/2026: começar pelo TRT2 enquanto a OAB do
+        # escritório não vem. É recorte GROSSO — traz o diário inteiro da 2ª
+        # Região, não só o que é nosso —, e por isso a maioria das publicações
+        # vai entrar sem casar com processo nenhum. Isso não é defeito: elas
+        # ficam marcadas como órfãs e o casamento por CNJ separa o joio. Mas é
+        # volume, e por isso o aviso aparece toda vez.
+        tribunal = "TRT2"
+        print("· sem --oab: usando --tribunal TRT2 (recorte grosso, decisão de 04/09).\n"
+              "  Traz o diário inteiro da 2ª Região; o que é nosso é o que casar por\n"
+              "  CNJ. Com a OAB do escritório isto vira só o que sai no nosso nome.")
 
     tudo, pagina = [], 1
     while pagina <= paginas_max:

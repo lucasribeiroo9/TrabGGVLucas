@@ -1,0 +1,115 @@
+{% extends "base.html" %}{% from "macros.html" import info %}{% set pg='publicacoes' %}
+{% block titulo %}Publicações{% endblock %}{% block corpo %}
+
+<div class="cal-topo"><h1>Publicações do diário</h1></div>
+<p class="sub">{{ total }} publicação(ões) neste recorte. O que sai no DEJT chega aqui
+  <b>antes</b> de virar trabalho: a máquina casa pelo número do processo e <b>propõe</b> o
+  tipo de prazo e o vencimento — em dias úteis, com o recesso de 20/12 a 20/01 já
+  descontado (CLT art. 775 e 775-A). <b>O prazo só nasce quando alguém daqui confirma.</b>
+  {% if orfas %}<br>Há {{ orfas }} publicação(ões) que não casaram com processo nenhum:
+  ou não são nossas, ou o processo não está no cadastro. É fila de conferência, não lixo.{% endif %}</p>
+
+<form method="get" class="filtros">
+  <input type="search" name="q" value="{{ p.get('q') or '' }}" placeholder="número ou texto">
+  <select name="orgao"><option value="">vara — qualquer</option>
+    {% for o in orgaos %}<option value="{{ o.orgao }}" {{ 'selected' if p.get('orgao')==o.orgao }}>{{ o.orgao }} ({{ o.n }})</option>{% endfor %}</select>
+  <button type="submit">filtrar</button><a href="/publicacoes" class="chip">limpar</a>
+</form>
+<div class="filtros">
+  <a href="/publicacoes{{ qs(request, tipo=None) }}" class="chip {{ 'on' if not p.get('tipo') }}">todos os atos</a>
+  {% for t in tipos %}<a href="/publicacoes{{ qs(request, tipo=t.tipo) }}"
+    class="chip {{ 'on' if p.get('tipo')==t.tipo }}">{{ t.tipo|rotulo }} · {{ t.n }}</a>{% endfor %}
+</div>
+<div class="filtros">
+  <a href="/publicacoes{{ qs(request, situacao='novas') }}" class="chip {{ 'on' if (p.get('situacao') or 'novas')=='novas' }}">não lidas</a>
+  {% for s in ['VIROU_PRAZO','SEM_PRAZO','NAO_E_NOSSA'] %}<a href="/publicacoes{{ qs(request, situacao=s) }}"
+    class="chip {{ 'on' if p.get('situacao')==s }}">{{ s|rotulo|lower }}</a>{% endfor %}
+  <a href="/publicacoes{{ qs(request, situacao='todas') }}" class="chip {{ 'on' if p.get('situacao')=='todas' }}">todas</a>
+  ·
+  <a href="/publicacoes{{ qs(request, casou='orfas') }}" class="chip {{ 'on' if p.get('casou')=='orfas' }}">só as órfãs</a>
+  <a href="/publicacoes{{ qs(request, casou='casadas') }}" class="chip {{ 'on' if p.get('casou')=='casadas' }}">só as casadas</a>
+</div>
+
+{% for c in linhas %}
+<div class="cartao">
+  <div class="cal-topo">
+    <b>{{ c.tipo_ato or 'publicação' }}</b>
+    <span class="sub">{{ c.orgao or '—' }}{% if c.tribunal %} · {{ c.tribunal }}{% endif %}</span>
+    <span class="marca-etapa">{{ c.situacao|rotulo }}</span>
+  </div>
+
+  <p class="sub">
+    {# As DUAS datas, sempre lado a lado: é a confusão entre elas que erra o
+       vencimento em dois dias, e o lado errado desse erro é prazo perdido. #}
+    disponibilizado em <b>{{ c.disponibilizado_em }}</b>
+    · publicado em <b>{{ c.publicado_em or '—' }}</b>
+    <span class="sub">(o primeiro dia útil seguinte — Lei 11.419/2006, art. 4º §§ 3º e 4º)</span>
+  </p>
+
+  <p>
+    {% if c.processo_id %}
+      <a href="/processos/{{ c.processo_id }}">{{ c.proc_cnj or c.numero_cnj }}</a>
+      {% if c.cliente %}· {{ c.cliente }}{% endif %}
+      {% if c.proc_fase %}· <span class="marca-etapa">{{ c.proc_fase|rotulo }}</span>{% endif %}
+      <span class="sub">casou por {{ c.casou_por }}</span>
+    {% else %}
+      <b>{{ c.numero_cnj or 'sem número no diário' }}</b>
+      <span class="sub">— não casou com processo do cadastro</span>
+    {% endif %}
+  </p>
+
+  <details><summary>o que o diário diz</summary>
+    <pre class="texto-diario">{{ c.texto }}</pre>
+  </details>
+
+  {% if c.situacao == 'NOVA' %}
+    {% if c.prazo_tipo_sugerido %}
+      <p class="proposta">
+        <b>Proposta da máquina:</b> {{ c.tipo_nome or c.prazo_tipo_sugerido }},
+        vencendo em <b>{{ c.vencimento_sugerido }}</b>.
+        <br><span class="sub">{{ c.sugestao_motivo }}</span>
+        {% if c.fundamento %}<br><span class="sub">{{ c.fundamento }}</span>{% endif %}
+      </p>
+    {% else %}
+      <p class="proposta"><b>A máquina não viu prazo aqui.</b>
+        <br><span class="sub">{{ c.sugestao_motivo }}</span></p>
+    {% endif %}
+
+    {% if c.processo_id %}
+    <form method="post" action="/publicacao/{{ c.id }}/decidir" class="filtros">
+      <input type="hidden" name="acao" value="prazo">
+      {# O tipo e a data vêm preenchidos com a proposta, e são EDITÁVEIS: quem
+         lê pode discordar da máquina, e é para isso que ele lê. #}
+      <input name="tipo" value="{{ c.prazo_tipo_sugerido or '' }}" size="24" placeholder="tipo do prazo">
+      <input name="vencimento" value="{{ c.vencimento_sugerido or '' }}" size="12" placeholder="AAAA-MM-DD">
+      <select name="responsavel_id"><option value="">responsável — eu</option>
+        {% for e in equipe_l %}<option value="{{ e.id }}">{{ e.nome }}</option>{% endfor %}</select>
+      <button type="submit">criar o prazo</button>
+    </form>
+    {% else %}
+    <form method="post" action="/publicacao/{{ c.id }}/decidir" class="filtros">
+      <input type="hidden" name="acao" value="ligar">
+      <input name="numero_cnj" size="26" placeholder="número CNJ do processo no cadastro">
+      <button type="submit">ligar a um processo</button>
+    </form>
+    {% endif %}
+
+    <form method="post" action="/publicacao/{{ c.id }}/decidir" class="filtros">
+      <button type="submit" name="acao" value="sem_prazo">não abre prazo</button>
+      <button type="submit" name="acao" value="nao_e_nossa">não é nossa</button>
+    </form>
+  {% else %}
+    <p class="sub">lida em {{ c.lida_em or '—' }}
+      {% if c.prazo_id %}· virou o <a href="/prazos">prazo #{{ c.prazo_id }}</a>{% endif %}</p>
+  {% endif %}
+</div>
+{% else %}
+<div class="cartao"><p>Nada neste recorte.
+  {% if (p.get('situacao') or 'novas') == 'novas' %}
+  Nenhuma publicação esperando leitura — ou o diário ainda não foi lido hoje.
+  <br><span class="sub">A leitura é <code>dejt.py --djen</code>. Rodada que falhou tem de
+  ser distinguível de dia sem publicação: o silêncio é o modo de falha do diário.</span>
+  {% endif %}</p></div>
+{% endfor %}
+
+{% endblock %}

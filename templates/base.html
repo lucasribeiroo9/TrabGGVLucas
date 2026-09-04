@@ -27,10 +27,13 @@
     </div>
     {% endif %}
 
-    {% if 'audiencias' in telas or 'prazos' in telas %}
-    <div class="grupo {{ 'on' if pg in ('audiencias','prazos') }}" tabindex="0">
+    {% if 'audiencias' in telas or 'prazos' in telas or 'publicacoes' in telas %}
+    <div class="grupo {{ 'on' if pg in ('audiencias','prazos','publicacoes') }}" tabindex="0">
       <span>Agenda judicial ▾</span>
       <div class="submenu">
+        {# Publicações vem antes de Prazos porque é a ordem dos fatos: o diário
+           sai, e é dele que o prazo nasce. #}
+        {% if 'publicacoes' in telas %}<a href="/publicacoes" class="{{ 'on' if pg=='publicacoes' }}">Publicações{% if pubs_novas %} <b class="chip-n">{{ pubs_novas }}</b>{% endif %}</a>{% endif %}
         {% if 'audiencias' in telas %}<a href="/audiencias" class="{{ 'on' if pg=='audiencias' }}">Audiências</a>{% endif %}
         {% if 'prazos' in telas %}<a href="/prazos" class="{{ 'on' if pg=='prazos' }}">Prazos</a>{% endif %}
       </div>

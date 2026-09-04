@@ -1977,6 +1977,162 @@ async def mover(req: Request):
     return _volta(req, destino, ok="etapa alterada e registrada no histórico", erro=erro)
 
 
+# =========================================================== publicações
+async def publicacoes(req: Request):
+    """A fila do diário: o que chegou, o que casou com processo, e o que a
+    máquina ACHA que é prazo.
+
+    O contador do topo conta DENTRO do recorte, como toda tela daqui: a fila
+    filtrada por vara não pode dizer "412 novas" quando mostra 3.
+    """
+    u, r = exige(req, "publicacoes")
+    if r:
+        return r
+    p = req.query_params
+    fl = Filtros(req)
+    db = conectar()
+    try:
+        rec = Recorte()
+        situacao = fl.texto("situacao") or "novas"
+        if situacao == "novas":
+            rec.mais("situacao", "pb.situacao = 'NOVA'")
+        elif situacao != "todas":
+            rec.mais("situacao", "pb.situacao = ?", situacao)
+        for campo, coluna in (("tipo", "pb.prazo_tipo_sugerido"),
+                              ("fonte", "pb.fonte"), ("orgao", "pb.orgao")):
+            v = fl.texto(campo)
+            if v:
+                rec.mais(campo, f"{coluna} = ?", v)
+        # As órfãs são a fila de conferência do CADASTRO, não lixo: publicação
+        # que não casou é processo que talvez não esteja no sistema.
+        casou = (p.get("casou") or "").strip()
+        if casou == "orfas":
+            rec.mais("casou", "pb.processo_id IS NULL")
+        elif casou == "casadas":
+            rec.mais("casou", "pb.processo_id IS NOT NULL")
+        busca = fl.texto("q")
+        if busca:
+            rec.mais("q", "(pb.numero_cnj ILIKE ? OR pb.texto ILIKE ?)",
+                     f"%{busca}%", f"%{busca}%")
+        filtro, args = rec.onde()
+
+        linhas = db.execute(f"""
+            SELECT pb.*, pr.numero_cnj proc_cnj, pr.fase proc_fase,
+                   c.nome cliente, pt.nome tipo_nome, pt.fundamento
+              FROM publicacoes pb
+              LEFT JOIN processos pr ON pr.id = pb.processo_id
+              LEFT JOIN clientes  c  ON c.id  = pr.cliente_id
+              LEFT JOIN prazo_tipos pt ON pt.codigo = pb.prazo_tipo_sugerido
+             WHERE {filtro}
+             ORDER BY pb.disponibilizado_em DESC, pb.id DESC LIMIT 300""",
+                            args).fetchall()
+        total = db.execute(f"SELECT COUNT(*) FROM publicacoes pb WHERE {filtro}",
+                           args).fetchone()[0]
+
+        # Cada chip conta o recorte SEM a sua própria dimensão — senão o chip
+        # de tipo, dentro de um filtro de tipo, ofereceria sempre 1 opção.
+        de_ti, arg_ti = rec.onde("tipo")
+        de_or, arg_or = rec.onde("orgao")
+        ctx = dict(
+            linhas=linhas, total=total, p=p, avisos=fl.avisos, pg="publicacoes",
+            tipos=db.execute(f"""SELECT pb.prazo_tipo_sugerido tipo, COUNT(*) n
+                                   FROM publicacoes pb
+                                  WHERE {de_ti} AND pb.prazo_tipo_sugerido IS NOT NULL
+                                  GROUP BY 1 ORDER BY n DESC""", arg_ti).fetchall(),
+            orgaos=db.execute(f"""SELECT pb.orgao, COUNT(*) n FROM publicacoes pb
+                                  WHERE {de_or} AND pb.orgao IS NOT NULL
+                                  GROUP BY 1 ORDER BY n DESC LIMIT 25""", arg_or).fetchall(),
+            orfas=db.execute("SELECT COUNT(*) FROM publicacoes WHERE processo_id IS NULL"
+                             ).fetchone()[0],
+            equipe_l=db.execute("SELECT id, nome FROM pessoas WHERE ativo=true ORDER BY nome"
+                                ).fetchall(),
+        )
+        return pagina(req, "publicacoes.html", **ctx)
+    finally:
+        db.close()
+
+
+async def publicacao_decidir(req: Request):
+    """A leitura humana da publicação. É AQUI que o prazo nasce — e só aqui.
+
+    A máquina propôs tipo e vencimento; quem decide é quem lê. Três saídas:
+    criar o prazo (com o tipo e a data que a pessoa confirmou, que podem não
+    ser os propostos), marcar que não abre prazo, ou dizer que a publicação não
+    é nossa. Nenhuma delas é automática: a regra 5 da casa vale inteira.
+    """
+    u, r = exige(req, "publicacoes")
+    if r:
+        return r
+    pid = int(req.path_params["id"])
+    f = await req.form()
+    acao = f.get("acao")
+    db = conectar()
+    erro = None
+    ok = None
+    try:
+        eu = _eu(db, u)
+        pb = db.execute("SELECT * FROM publicacoes WHERE id=?", (pid,)).fetchone()
+        if not pb:
+            return _volta(req, "/publicacoes", erro="publicação não encontrada")
+
+        if acao == "prazo":
+            if not pb["processo_id"]:
+                raise ValueError("esta publicação não está ligada a nenhum processo; "
+                                 "ligue-a a um processo antes de criar o prazo")
+            tipo = (f.get("tipo") or "").strip() or pb["prazo_tipo_sugerido"]
+            venc = (f.get("vencimento") or "").strip() or pb["vencimento_sugerido"]
+            if not tipo or not venc:
+                raise ValueError("informe o tipo do prazo e o vencimento")
+            # O prazo nasce em ABERTO — a etapa inicial do fluxo PRAZO — e o
+            # gatilho `gov_nasce_na_inicial` recusaria qualquer outra. A origem
+            # é DEJT, e as datas da publicação vão junto: é delas que a
+            # contagem sai, e sem elas ninguém confere a conta depois.
+            db.execute("""INSERT INTO prazos
+                    (processo_id, situacao, tipo, descricao, origem,
+                     disponibilizado_em, publicado_em, vencimento, contagem,
+                     responsavel_id)
+                    VALUES (?, 'ABERTO', ?, ?, 'DEJT', ?, ?, ?, 'UTEIS', ?)""",
+                       (pb["processo_id"], tipo,
+                        (pb["tipo_ato"] or "publicação do diário")[:200],
+                        pb["disponibilizado_em"], pb["publicado_em"], venc,
+                        _pessoa_do_form(f.get("responsavel_id")) or eu))
+            novo = db.execute("SELECT MAX(id) FROM prazos WHERE processo_id=?",
+                              (pb["processo_id"],)).fetchone()[0]
+            db.execute("""UPDATE publicacoes SET situacao='VIROU_PRAZO', prazo_id=?,
+                            lida_em=datetime('now'), lida_por=? WHERE id=?""",
+                       (novo, eu, pid))
+            ok = "prazo criado e ligado à publicação"
+        elif acao == "sem_prazo":
+            db.execute("""UPDATE publicacoes SET situacao='SEM_PRAZO',
+                            lida_em=datetime('now'), lida_por=? WHERE id=?""", (eu, pid))
+            ok = "marcada como ato que não abre prazo"
+        elif acao == "nao_e_nossa":
+            db.execute("""UPDATE publicacoes SET situacao='NAO_E_NOSSA',
+                            lida_em=datetime('now'), lida_por=? WHERE id=?""", (eu, pid))
+            ok = "marcada como publicação de outro escritório"
+        elif acao == "ligar":
+            # Casar à mão o que o CNJ não casou. `casou_por='MANUAL'` guarda que
+            # foi gente — a força da ligação importa quando alguém revisar.
+            cnj = re.sub(r"\D", "", f.get("numero_cnj") or "")
+            alvo = db.execute("SELECT id FROM processos WHERE numero_cnj_digitos=?",
+                              (cnj,)).fetchone() if cnj else None
+            if not alvo:
+                raise ValueError("não achei processo com esse número no cadastro")
+            db.execute("UPDATE publicacoes SET processo_id=?, casou_por='MANUAL' WHERE id=?",
+                       (alvo[0], pid))
+            ok = "publicação ligada ao processo"
+        else:
+            raise ValueError("ação desconhecida")
+        db.commit()
+    except ValueError as e:
+        erro = str(e)
+    except banco.ErroBanco as e:
+        erro = _recado(e)
+    finally:
+        db.close()
+    return _volta(req, "/publicacoes", ok=ok, erro=erro)
+
+
 # =========================================================== rotas
 rotas = [
     Route("/entrar", entrar, methods=["GET", "POST"]),
@@ -2003,6 +2159,9 @@ rotas = [
 
     Route("/prazos", prazos),
     Route("/prazo/{id:int}/responsavel", prazo_responsavel, methods=["POST"]),
+
+    Route("/publicacoes", publicacoes),
+    Route("/publicacao/{id:int}/decidir", publicacao_decidir, methods=["POST"]),
 
     Route("/empresas", empresas),
     Route("/empresas/{id:int}", empresa),

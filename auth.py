@@ -42,7 +42,7 @@ BASE = {"meu_dia", "tarefas", "perfil"}
 
 # o caso, do lead ao arquivamento
 DO_CASO = {"clientes", "processos", "audiencias", "prazos", "empresas",
-           "testemunhas", "conferencias"}
+           "testemunhas", "conferencias", "publicacoes"}
 
 # olhar de gestão: o escritório inteiro, a equipe e o mapa de etapas
 GESTAO = {"painel", "equipe", "fluxos"}
