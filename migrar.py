@@ -292,7 +292,8 @@ class Banco:
                 g["conferencias"][linha[0]] = linha
             for linha in self.consultar(
                     "SELECT u.id, u.email, u.senha_hash, u.papel, u.ativo, u.trocar_senha, "
-                    "u.ultimo_acesso, u.criado_em, p.airtable_record_id, p.nome_norm "
+                    "u.ultimo_acesso, u.criado_em, u.tema, u.fonte_pct, "
+                    "p.airtable_record_id, p.nome_norm "
                     "FROM usuarios u LEFT JOIN pessoas p ON p.id = u.pessoa_id ORDER BY u.id"):
                 g["usuarios"].append(linha)
         except Exception:
@@ -423,14 +424,18 @@ class Migracao:
         record mudou); quem saiu da origem fica com a conta sem pessoa — não
         sem conta."""
         n = 0
-        for (uid, email, senha_hash, papel, ativo, trocar, ultimo, criado, rec,
-             nome_norm) in guardadas.get("usuarios", []):
+        for (uid, email, senha_hash, papel, ativo, trocar, ultimo, criado, tema,
+             fonte_pct, rec, nome_norm) in guardadas.get("usuarios", []):
             pid = self.pessoa.get(rec) or self.pessoa_por_nome.get(nome_norm)
+            # tema e corpo da letra voltam junto: é escolha da pessoa, e refazer
+            # o ajuste a cada recarga é o tipo de atrito que faz o ajuste ser
+            # abandonado.
             self.bd.executar(
                 "INSERT INTO usuarios (id, pessoa_id, email, senha_hash, papel, ativo, "
-                "trocar_senha, ultimo_acesso, criado_em) OVERRIDING SYSTEM VALUE "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (uid, pid, email, senha_hash, papel, ativo, trocar, ultimo, criado))
+                "trocar_senha, ultimo_acesso, criado_em, tema, fonte_pct) "
+                "OVERRIDING SYSTEM VALUE VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (uid, pid, email, senha_hash, papel, ativo, trocar, ultimo, criado,
+                 tema or "escuro", fonte_pct or 100))
             n += 1
         if n:
             self.bd.conta["usuarios (preservados)"] = n

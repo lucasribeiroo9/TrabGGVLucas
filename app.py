@@ -186,7 +186,12 @@ def _volta(req, padrao, ok=None, erro=None):
     junta = "&" if "?" in padrao else "?"
     if erro:
         return RedirectResponse(f"{padrao}{junta}erro={quote(str(erro)[:400])}", 302)
-    return RedirectResponse(f"{padrao}{junta}ok={quote(str(ok or 1))}", 302)
+    # Sem recado, NÃO se inventa um: `ok or 1` punha "1" na faixa verde do topo,
+    # e a pessoa lia um aviso que não diz nada. Ação que se vê sozinha — trocar
+    # o tema, por exemplo — não precisa de confirmação escrita.
+    if not ok:
+        return RedirectResponse(padrao, 302)
+    return RedirectResponse(f"{padrao}{junta}ok={quote(str(ok))}", 302)
 
 
 class Recorte:
@@ -1977,6 +1982,51 @@ async def mover(req: Request):
     return _volta(req, destino, ok="etapa alterada e registrada no histórico", erro=erro)
 
 
+# =========================================================== aparência
+async def aparencia(req: Request):
+    """Tema e corpo da letra, por pessoa.
+
+    O CSS já sabia fazer os dois temas — o claro no `:root`, o escuro em
+    `[data-tema="escuro"]` — e o `base.html` já aplicava `--fonte-pct`. O que
+    faltava era onde guardar a escolha: sem coluna, toda tela caía no padrão e
+    o ajuste tinha de ser refeito a cada manhã.
+    """
+    u, r = exige(req)
+    if r:
+        return r
+    f = await req.form()
+    tema = (f.get("tema") or "").strip()
+    if tema not in ("claro", "escuro"):
+        tema = None
+    try:
+        pct = int(f.get("fonte_pct") or 0)
+    except ValueError:
+        pct = 0
+    # A faixa é a do CHECK do banco: fora dela o gatilho recusaria, e recusa de
+    # banco por causa de um clique em "A+" seria tela de erro por nada.
+    pct = min(150, max(80, pct)) if pct else None
+
+    db = conectar()
+    try:
+        # A sessão guarda o usuário em "usuario" — e o dicionário precisa ser
+        # REATRIBUÍDO, não mutado: o middleware de sessão só regrava o cookie
+        # quando enxerga a atribuição, e sem ela a escolha voltaria ao antigo
+        # na próxima tela, mesmo estando certa no banco.
+        sessao = dict(req.session.get("usuario") or {})
+        if tema:
+            db.execute("UPDATE usuarios SET tema=? WHERE id=?", (tema, u["id"]))
+            sessao["tema"] = tema
+        if pct:
+            db.execute("UPDATE usuarios SET fonte_pct=? WHERE id=?", (pct, u["id"]))
+            sessao["fonte_pct"] = pct
+        db.commit()
+        req.session["usuario"] = sessao
+    finally:
+        db.close()
+    # volta para a mesma tela: trocar a aparência não é navegar
+    return _volta(req, req.headers.get("referer") or "/")
+
+
 # =========================================================== publicações
 async def publicacoes(req: Request):
     """A fila do diário: o que chegou, o que casou com processo, e o que a
@@ -2162,6 +2212,7 @@ rotas = [
 
     Route("/publicacoes", publicacoes),
     Route("/publicacao/{id:int}/decidir", publicacao_decidir, methods=["POST"]),
+    Route("/aparencia", aparencia, methods=["POST"]),
 
     Route("/empresas", empresas),
     Route("/empresas/{id:int}", empresa),

@@ -1315,3 +1315,23 @@ details.cartao table,.cartao table{display:block;overflow-x:auto;max-width:100%}
 /* O contador do menu. Pequeno de propósito: é aviso, não alarme. */
 .chip-n{display:inline-block;min-width:1.4em;padding:0 .35em;border-radius:20px;
   background:var(--traco-vermelho);color:#fff;font-size:0.6875rem;text-align:center}
+
+/* ---- menu: o que ainda não existe ------------------------------------- */
+/* Aparece no lugar certo, apagado, com o ⓘ dizendo o que falta. Esconder
+   daria um menu curto e uma surpresa; assim o mapa fica à vista. */
+.submenu .futuro, nav > .futuro{
+  display:flex;align-items:center;gap:.35em;
+  padding:.42em .9em;color:var(--fraco);opacity:.72;cursor:default;white-space:nowrap}
+nav > .futuro{padding:.5em .7em}
+.submenu hr{border:0;border-top:1px solid var(--borda);margin:.35em .6em}
+.submenu-largo{min-width:15rem}
+
+/* ---- aparência: tema e corpo da letra ---------------------------------- */
+.aparencia{display:flex;align-items:center;gap:.4em;padding:.4em .9em;flex-wrap:wrap}
+.aparencia b{font-size:0.6875rem;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--fraco);min-width:3.2em}
+.aparencia button{padding:.2em .6em;font-size:0.75rem;border:1px solid var(--borda);
+  border-radius:5px;background:var(--fundo);color:var(--texto);cursor:pointer}
+.aparencia button:hover{border-color:var(--acento)}
+.aparencia button.on{background:var(--acento-fraco);border-color:var(--acento);
+  color:var(--acento);font-weight:600}

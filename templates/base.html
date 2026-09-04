@@ -5,6 +5,7 @@
     `default(...)` não é descuido: tela renderizada fora de `pagina()` não
     recebe `tema` nem `fonte_pct`, e o efeito não seria letra no tamanho errado
     — seria 500 justo na tela que diz "não pode". #}
+{% from "macros.html" import info %}
 <!doctype html><html lang="pt-BR" data-tema="{{ tema|default('escuro', true) }}"
   style="--fonte-pct:{{ fonte_pct|default(100, true) }}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -14,59 +15,117 @@
 {% if u %}
 <header><div class="barra">
   <div class="marca">GGV <span>Trabalhista</span></div>
+  {#  O desenho dos grupos é o do Portal GGV Prev (Atendimento · Jurídico ·
+      Gestão · Sistema), porque é o que o escritório já sabe usar de cor. O
+      CONTEÚDO é trabalhista: onde o Prev tem Benefícios e Acervo do INSS, aqui
+      entram Audiências, Testemunhas e Reclamadas — a prova do processo do
+      trabalho.
+
+      O que ainda não existe aparece assim mesmo, apagado e com o ⓘ dizendo o
+      que falta para nascer. Esconder daria um menu curto e uma surpresa; deste
+      jeito o mapa inteiro fica à vista, e o que falta fica escrito. #}
+  {% macro futuro(nome, porque) -%}
+    <span class="futuro">{{ nome }} {{ info(porque, 'ainda não existe') }}</span>
+  {%- endmacro %}
   <nav>
-    {% if 'meu_dia' in telas %}<a href="/" class="{{ 'on' if pg=='inicio' }}">Início</a>{% endif %}
+    {% if 'meu_dia' in telas %}<a href="/" class="{{ 'on' if pg=='inicio' }}">Meu dia</a>{% endif %}
 
     {% if 'clientes' in telas %}
-    <div class="grupo {{ 'on' if pg in ('clientes','processos') }}" tabindex="0">
-      <span>Casos ▾</span>
+    <div class="grupo {{ 'on' if pg in ('clientes','cliente') }}" tabindex="0">
+      <span>Atendimento ▾</span>
       <div class="submenu">
-        <a href="/clientes" class="{{ 'on' if pg=='clientes' }}">Clientes (funil)</a>
-        {% if 'processos' in telas %}<a href="/processos" class="{{ 'on' if pg=='processos' }}">Processos</a>{% endif %}
+        {{ futuro('+ Novo lead', 'O portal ainda não CRIA ficha: quem cadastra é a
+           migração do Airtable. Enquanto isso a etapa LEAD não passa a existir, e a
+           taxa de conversão nasce sem numerador.') }}
+        {{ futuro('+ Novo cliente', 'Mesmo caso do lead: falta a tela de cadastro.
+           Hoje o cliente entra pela carga, já assinado.') }}
+        {{ futuro('Entrevista gravada', 'Precisa de transcrição. No Prev é o mlx-whisper,
+           que só roda no Mac; aqui a escolha é entre isso e uma API de transcrição.') }}
+        <hr>
+        <a href="/clientes" class="{{ 'on' if pg=='clientes' }}">Clientes</a>
+        <a href="/clientes?status=LEAD">Leads em aberto</a>
+        {% if 'audiencias' in telas %}<a href="/audiencias">Agenda</a>{% endif %}
       </div>
     </div>
     {% endif %}
 
-    {% if 'audiencias' in telas or 'prazos' in telas or 'publicacoes' in telas %}
-    <div class="grupo {{ 'on' if pg in ('audiencias','prazos','publicacoes') }}" tabindex="0">
-      <span>Agenda judicial ▾</span>
+    <div class="grupo {{ 'on' if pg in ('publicacoes','conferencias','processos','prazos','audiencias','empresas','testemunhas') }}" tabindex="0">
+      <span>Jurídico ▾</span>
       <div class="submenu">
-        {# Publicações vem antes de Prazos porque é a ordem dos fatos: o diário
-           sai, e é dele que o prazo nasce. #}
         {% if 'publicacoes' in telas %}<a href="/publicacoes" class="{{ 'on' if pg=='publicacoes' }}">Publicações{% if pubs_novas %} <b class="chip-n">{{ pubs_novas }}</b>{% endif %}</a>{% endif %}
-        {% if 'audiencias' in telas %}<a href="/audiencias" class="{{ 'on' if pg=='audiencias' }}">Audiências</a>{% endif %}
+        {{ futuro('Decisões', 'A tabela `decisoes` já existe e a carga real traz 3.668
+           sentenças e acórdãos. Falta a tela — é a próxima que dá para fazer sem
+           depender de nada de fora.') }}
+        {{ futuro('Fontes das publicações', 'Uma linha por execução da leitura do DEJT,
+           com o que entrou e o que falhou. O silêncio é o modo de falha do diário:
+           rodada que quebrou tem de ser distinguível de dia sem publicação.') }}
+        {% if 'conferencias' in telas %}<a href="/conferencias" class="{{ 'on' if pg=='conferencias' }}">Conferências</a>{% endif %}
+        {{ futuro('Análise e petições', 'Precisa da chave da API do Claude e das teses
+           trabalhistas escritas — no Prev são 12 matérias de jurisprudência da casa.') }}
+        {{ futuro('GGV Estudos trabalhista', 'O que as decisões dos nossos casos ensinam,
+           por matéria. Depende da tela de Decisões existir primeiro.') }}
+        {{ futuro('Recaptação', 'Falta a regra: quem recaptar, e por qual sinal. No Prev
+           é decisão do escritório, não do código.') }}
+        <hr>
+        {% if 'processos' in telas %}<a href="/processos" class="{{ 'on' if pg=='processos' }}">Processos</a>{% endif %}
         {% if 'prazos' in telas %}<a href="/prazos" class="{{ 'on' if pg=='prazos' }}">Prazos</a>{% endif %}
-      </div>
-    </div>
-    {% endif %}
-
-    {% if 'empresas' in telas or 'testemunhas' in telas %}
-    <div class="grupo {{ 'on' if pg in ('empresas','testemunhas') }}" tabindex="0">
-      <span>Prova ▾</span>
-      <div class="submenu">
-        {% if 'empresas' in telas %}<a href="/empresas" class="{{ 'on' if pg=='empresas' }}">Reclamadas</a>{% endif %}
+        {# onde o Prev tem Benefícios, o trabalhista tem a pauta e a prova #}
+        {% if 'audiencias' in telas %}<a href="/audiencias" class="{{ 'on' if pg=='audiencias' }}">Audiências</a>{% endif %}
         {% if 'testemunhas' in telas %}<a href="/testemunhas" class="{{ 'on' if pg=='testemunhas' }}">Testemunhas</a>{% endif %}
+        {% if 'empresas' in telas %}<a href="/empresas" class="{{ 'on' if pg=='empresas' }}">Reclamadas</a>{% endif %}
+        {{ futuro('Acervo', 'Os documentos de cada processo, com link. A tabela
+           `documentos` existe; falta a origem — no Prev é o Drive indexado, e aqui a
+           base traz 8 anexos.') }}
       </div>
     </div>
-    {% endif %}
 
     {% if 'tarefas' in telas or 'equipe' in telas or 'painel' in telas %}
-    <div class="grupo {{ 'on' if pg in ('tarefas','equipe','painel','fluxos','conferencias') }}" tabindex="0">
+    <div class="grupo {{ 'on' if pg in ('tarefas','equipe','painel','fluxos') }}" tabindex="0">
       <span>Gestão ▾</span>
       <div class="submenu">
-        {% if 'tarefas' in telas %}<a href="/tarefas" class="{{ 'on' if pg=='tarefas' }}">Tarefas</a>{% endif %}
-        {% if 'conferencias' in telas %}<a href="/conferencias" class="{{ 'on' if pg=='conferencias' }}">Conferências</a>{% endif %}
+        {{ futuro('Indicadores de gestão', 'Metas por setor e o realizado. No Prev é
+           `gestao.py`: indicador só entra se dá para apurar.') }}
+        {% if 'tarefas' in telas %}<a href="/tarefas" class="{{ 'on' if pg=='tarefas' }}">Tarefas do escritório</a>{% endif %}
         {% if 'equipe' in telas %}<a href="/equipe" class="{{ 'on' if pg=='equipe' }}">Equipe</a>{% endif %}
+        {{ futuro('Distribuir trabalho', 'A regra de fila existe no motor de automação;
+           falta a tela e a decisão do teto por pessoa.') }}
         {% if 'fluxos' in telas %}<a href="/fluxos" class="{{ 'on' if pg=='fluxos' }}">Governança</a>{% endif %}
-        {% if 'painel' in telas %}<a href="/painel" class="{{ 'on' if pg=='painel' }}">Painel</a>{% endif %}
+        {% if 'painel' in telas %}<a href="/painel" class="{{ 'on' if pg=='painel' }}">Painel do escritório</a>{% endif %}
+        {{ futuro('O que o sistema aprendeu', 'Depende de as automações rodarem e
+           deixarem rastro por um tempo. Sem histórico não há o que mostrar.') }}
       </div>
     </div>
     {% endif %}
+
+    {{ futuro('IA GGV', 'O chat que consulta o sistema antes de responder, e só o que
+       você pode ver. Precisa da chave `anthropic-api` e do recorte por permissão.') }}
+
+    <div class="grupo" tabindex="0">
+      <span>Sistema ▾</span>
+      <div class="submenu submenu-largo">
+        <form method="post" action="/aparencia" class="aparencia">
+          <b>Tema</b>
+          <button name="tema" value="escuro" class="{{ 'on' if (u.tema or 'escuro')=='escuro' }}">escuro</button>
+          <button name="tema" value="claro" class="{{ 'on' if u.tema=='claro' }}">claro</button>
+        </form>
+        <form method="post" action="/aparencia" class="aparencia">
+          <b>Letra</b>
+          {# 80 a 150 é a faixa que o CHECK do banco aceita; o passo de 10 evita
+             a pessoa ter de clicar oito vezes para notar diferença. #}
+          <button name="fonte_pct" value="{{ [80, (u.fonte_pct or 100) - 10]|max }}">A−</button>
+          <span class="sub">{{ u.fonte_pct or 100 }}%</span>
+          <button name="fonte_pct" value="{{ [150, (u.fonte_pct or 100) + 10]|min }}">A+</button>
+          <button name="fonte_pct" value="100">padrão</button>
+        </form>
+        <hr>
+        <a href="/senha">Trocar senha</a>
+        <a href="/sair">Sair</a>
+      </div>
+    </div>
   </nav>
   <a href="/" class="marca-agora" id="conta-agora" hidden></a>
   <div class="quem">
-    {{ u.nome }} · {{ u.papel|lower }}{% if u.setor %} · {{ u.setor }}{% endif %}<br>
-    <a href="/senha">trocar senha</a> · <a href="/sair">sair</a>
+    {{ u.nome }} · {{ u.papel|lower }}{% if u.setor %} · {{ u.setor }}{% endif %}
   </div>
 </div></header>
 {% endif %}

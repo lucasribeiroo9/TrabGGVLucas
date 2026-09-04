@@ -102,7 +102,7 @@ def autenticar(db, email, senha):
     """Devolve o dicionário da sessão, ou None. O SETOR vem junto: é ele que,
     ao lado do papel, decide o que a pessoa vê."""
     u = db.execute("""SELECT u.id, u.email, u.senha_hash, u.papel, u.ativo,
-                             u.trocar_senha, u.pessoa_id,
+                             u.trocar_senha, u.pessoa_id, u.tema, u.fonte_pct,
                              COALESCE(p.nome, u.email) nome, p.setor
                       FROM usuarios u LEFT JOIN pessoas p ON p.id = u.pessoa_id
                       WHERE lower(u.email) = ?""",
@@ -111,9 +111,13 @@ def autenticar(db, email, senha):
         return None
     db.execute("UPDATE usuarios SET ultimo_acesso=datetime('now') WHERE id=?", (u["id"],))
     db.commit()
+    # Aparência é de PESSOA, não da instalação: quem passa o dia na tela escolhe
+    # o contraste e o corpo da letra que enxerga. Vai na sessão para o `base.html`
+    # aplicar já na primeira tela, sem uma consulta por página.
     return {"id": u["id"], "nome": u["nome"], "email": u["email"], "papel": u["papel"],
             "trocar_senha": bool(u["trocar_senha"]), "setor": u["setor"],
-            "pessoa_id": u["pessoa_id"]}
+            "pessoa_id": u["pessoa_id"],
+            "tema": u["tema"] or "escuro", "fonte_pct": u["fonte_pct"] or 100}
 
 
 # ------------------------------------------------------- abrir acesso

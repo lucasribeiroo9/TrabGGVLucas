@@ -99,6 +99,11 @@ CREATE TABLE usuarios (
     ativo          BOOLEAN NOT NULL DEFAULT true,
     trocar_senha   BOOLEAN NOT NULL DEFAULT true,
     ultimo_acesso  TEXT,
+    -- Aparência é de PESSOA, não da instalação. Quem passa oito horas na tela
+    -- escolhe o contraste e o corpo da letra que enxerga — e a escolha tem de
+    -- sobreviver ao logout, senão vira ajuste que se refaz toda manhã.
+    tema           TEXT NOT NULL DEFAULT 'escuro' CHECK (tema IN ('escuro','claro')),
+    fonte_pct      INTEGER NOT NULL DEFAULT 100 CHECK (fonte_pct BETWEEN 80 AND 150),
     criado_em      TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD HH24:MI:SS')
 );
 
