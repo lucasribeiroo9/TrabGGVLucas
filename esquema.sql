@@ -122,6 +122,10 @@ CREATE TABLE empresas (
     cnpj              TEXT,                       -- só dígitos
     razao_social      TEXT,
     segmento          TEXT,
+    -- O acervo do Drive é indexado pela EMPRESA (docs/acervo-drive.md): o caminho
+    -- é PROCESSOS/[EMPRESA]/[CLIENTE X RECLAMADA]/. O link do caso é do processo;
+    -- este é o da reclamada.
+    link_pasta_drive  TEXT,
     situacao          TEXT CHECK (situacao IS NULL OR situacao IN ('ATIVA','INATIVA','EM_RECUPERACAO')),
     hist_pagamento    TEXT CHECK (hist_pagamento IS NULL OR hist_pagamento IN ('BOA','RUIM','PESSIMA')),
     bens_identificados BOOLEAN,
@@ -1145,6 +1149,120 @@ CREATE INDEX ix_publicacoes_processo ON publicacoes(processo_id);
 CREATE INDEX ix_publicacoes_cnj ON publicacoes(numero_cnj_digitos) WHERE numero_cnj_digitos <> '';
 -- A que não casou com processo nenhum: é a fila de conferência do cadastro.
 CREATE INDEX ix_publicacoes_orfas ON publicacoes(disponibilizado_em DESC) WHERE processo_id IS NULL;
+
+-- ---------------------------------------------------------------------
+-- A RECLAMADA COMO EIXO
+--
+-- A varredura do Drive (docs/acervo-drive.md) mostrou que o acervo inteiro é
+-- indexado pela empresa, não pelo cliente: o caminho é
+-- `PROCESSOS/[EMPRESA]/[CLIENTE X RECLAMADA]/`, e o procedimento escrito do
+-- escritório manda procurar a pasta da empresa ANTES de criar a do cliente.
+-- A carteira dos advogados também é dividida por reclamada.
+--
+-- O modelo tratava a empresa como um apêndice do processo (`processos.empresa_id`,
+-- uma só, sem grupo econômico e sem dono). Estas três tabelas põem a empresa
+-- no centro, sem tirar nada do que já existe.
+-- ---------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------
+-- 1. O GRUPO ECONÔMICO, e as duplicatas.
+--
+-- A inicial trabalhista pede solidariedade (grupo econômico, CLT art. 2º §2º) e
+-- subsidiariedade (tomador de serviço, Súmula 331 do TST). Isso não é texto da
+-- petição: é relação entre pessoas jurídicas, e o Protocolo de um caso já trazia
+-- JUCESP da reclamada E da co-ré mais o cartão CNPJ do tomador.
+--
+-- `MESMA_EMPRESA` existe por um motivo prático: o Drive tem a mesma reclamada em
+-- pastas separadas, com variantes de grafia e erro de digitação. Fundir os
+-- cadastros apagaria o histórico de cada um; marcar que são a mesma preserva os
+-- dois e deixa a tela somar. Deduplicar é decisão de gente, não de carga.
+-- ---------------------------------------------------------------------
+CREATE TABLE empresa_relacoes (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    empresa_id    BIGINT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    relacionada_id BIGINT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    tipo          TEXT NOT NULL CHECK (tipo IN (
+                    'GRUPO_ECONOMICO',   -- CLT art. 2º §2º: responde solidariamente
+                    'TOMADOR_SERVICO',   -- Súmula 331 TST: responde subsidiariamente
+                    'CONSORCIO',
+                    'SUCESSAO',          -- CLT arts. 10 e 448
+                    'MESMA_EMPRESA')),   -- cadastro repetido, ainda não fundido
+    prova         TEXT,                  -- JUCESP, cartão CNPJ, contrato social
+    observacao    TEXT,
+    criado_em     TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD HH24:MI:SS'),
+    -- A relação é simétrica na vida, mas guardá-la nos dois sentidos duplicaria
+    -- a manutenção. Guarda-se um sentido; a tela lê os dois.
+    UNIQUE (empresa_id, relacionada_id, tipo),
+    CHECK (empresa_id <> relacionada_id)
+);
+CREATE INDEX ix_emp_rel_empresa ON empresa_relacoes(empresa_id);
+CREATE INDEX ix_emp_rel_relacionada ON empresa_relacoes(relacionada_id);
+
+-- ---------------------------------------------------------------------
+-- 2. AS PARTES DO PROCESSO.
+--
+-- `processos.empresa_id` continua existindo e continua sendo a reclamada
+-- PRINCIPAL — nada do que já lê aquela coluna quebra. Esta tabela guarda o
+-- quadro completo: a principal, as co-rés e o tomador, cada uma com o tipo de
+-- responsabilidade que a inicial pede.
+-- ---------------------------------------------------------------------
+CREATE TABLE processo_empresas (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    processo_id   BIGINT NOT NULL REFERENCES processos(id) ON DELETE CASCADE,
+    empresa_id    BIGINT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    papel         TEXT NOT NULL CHECK (papel IN ('RECLAMADA','CORRE','TOMADOR')),
+    responsabilidade TEXT CHECK (responsabilidade IS NULL OR responsabilidade IN (
+                    'SOLIDARIA','SUBSIDIARIA')),
+    -- o que o juízo decidiu sobre ESTA parte, que pode não ser o do processo
+    reconhecida   BOOLEAN,
+    observacao    TEXT,
+    criado_em     TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD HH24:MI:SS'),
+    UNIQUE (processo_id, empresa_id)
+);
+CREATE INDEX ix_proc_emp_processo ON processo_empresas(processo_id);
+CREATE INDEX ix_proc_emp_empresa ON processo_empresas(empresa_id);
+
+-- ---------------------------------------------------------------------
+-- 3. A CARTEIRA.
+--
+-- Quem responde por aquela reclamada. É o que decide quem pega o caso novo —
+-- e contraria a distribuição por carga do sistema previdenciário, onde a
+-- tarefa vai para quem está mais leve. Aqui vai para quem tem a empresa.
+--
+-- `ate` existe porque carteira muda: o histórico de quem respondia por uma
+-- reclamada explica decisão tomada dois anos atrás.
+-- ---------------------------------------------------------------------
+CREATE TABLE empresa_carteira (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    empresa_id    BIGINT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    pessoa_id     BIGINT NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
+    papel         TEXT NOT NULL DEFAULT 'RESPONSAVEL'
+                  CHECK (papel IN ('RESPONSAVEL','APOIO')),
+    desde         TEXT,
+    ate           TEXT,                  -- NULL = é a carteira de hoje
+    observacao    TEXT,
+    criado_em     TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD HH24:MI:SS')
+);
+CREATE INDEX ix_carteira_empresa ON empresa_carteira(empresa_id) WHERE ate IS NULL;
+CREATE INDEX ix_carteira_pessoa ON empresa_carteira(pessoa_id) WHERE ate IS NULL;
+
+-- ---------------------------------------------------------------------
+-- A empresa vista inteira: quantos casos, quanto vale, quem responde por ela.
+-- É a consulta que a tela de Reclamadas faz, e que hoje não existia.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_empresa_carteira AS
+SELECT e.id, e.nome, e.cnpj, e.segmento, e.situacao,
+       (SELECT string_agg(p.nome, ', ' ORDER BY p.nome)
+          FROM empresa_carteira ec JOIN pessoas p ON p.id = ec.pessoa_id
+         WHERE ec.empresa_id = e.id AND ec.ate IS NULL AND ec.papel = 'RESPONSAVEL') responsaveis,
+       (SELECT COUNT(*) FROM processos pr WHERE pr.empresa_id = e.id) processos,
+       (SELECT COUNT(*) FROM processos pr
+         WHERE pr.empresa_id = e.id AND pr.fase NOT IN ('ENCERRADO','DESISTENCIA')) processos_vivos,
+       (SELECT COALESCE(SUM(pr.valor_causa_centavos),0) FROM processos pr
+         WHERE pr.empresa_id = e.id) valor_causa_centavos,
+       (SELECT COUNT(*) FROM empresa_relacoes er
+         WHERE er.empresa_id = e.id OR er.relacionada_id = e.id) relacionadas
+  FROM empresas e;
 
 -- ---------------------------------------------------------------------
 -- 15. As FKs que só podem existir agora (referências para frente)
